@@ -3,272 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Candie & Will - 我们的小天地</title>
+    <title>Candie & Will</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-
         body {
             font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-            background: linear-gradient(135deg, #fdf6e3 0%, #fff0f5 50%, #e8f4fd 100%);
+            background: #fafafa;
             min-height: 100vh;
-            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #333;
         }
-
-        /* Floating decorations */
-        .decorations {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            pointer-events: none;
-            z-index: 0;
+        h1 {
+            font-size: 2.4rem;
+            font-weight: 300;
+            letter-spacing: 0.05em;
+            margin-bottom: 2.5rem;
         }
-        .decoration {
-            position: absolute;
-            font-size: 2rem;
-            opacity: 0.3;
-            animation: float 6s ease-in-out infinite;
-        }
-        @keyframes float {
-            0%, 100% { transform: translateY(0) rotate(0deg); }
-            50% { transform: translateY(-20px) rotate(10deg); }
-        }
-
-        .container {
-            position: relative;
-            z-index: 1;
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 2rem 1rem;
-        }
-
-        header {
-            text-align: center;
-            padding: 3rem 0 2rem;
-        }
-        header h1 {
-            font-size: 3rem;
-            background: linear-gradient(135deg, #ff6b9d, #c44dff, #4d9fff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 0.5rem;
-        }
-        header p {
-            font-size: 1.2rem;
-            color: #888;
-        }
-
-        .kids-section {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
+        .nav {
+            display: flex;
             gap: 2rem;
-            margin: 2rem 0;
-        }
-
-        .kid-card {
-            background: white;
-            border-radius: 24px;
-            padding: 2rem;
-            text-align: center;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.08);
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-        .kid-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 16px 48px rgba(0,0,0,0.12);
-        }
-        .kid-card.candie { border-bottom: 4px solid #ff6b9d; }
-        .kid-card.will { border-bottom: 4px solid #4d9fff; }
-
-        .kid-avatar {
-            width: 120px;
-            height: 120px;
-            border-radius: 50%;
-            margin: 0 auto 1.5rem;
-            display: flex;
-            align-items: center;
+            flex-wrap: wrap;
             justify-content: center;
-            font-size: 3.5rem;
         }
-        .kid-card.candie .kid-avatar { background: linear-gradient(135deg, #ffeef5, #ffe0ec); }
-        .kid-card.will .kid-avatar { background: linear-gradient(135deg, #eef5ff, #e0ecff); }
-
-        .kid-card h2 {
-            font-size: 1.8rem;
-            margin-bottom: 0.5rem;
-        }
-        .kid-card.candie h2 { color: #ff6b9d; }
-        .kid-card.will h2 { color: #4d9fff; }
-
-        .kid-card .age {
-            display: inline-block;
-            padding: 0.3rem 1rem;
-            border-radius: 20px;
-            font-size: 0.9rem;
-            margin-bottom: 1rem;
-            color: white;
-        }
-        .kid-card.candie .age { background: linear-gradient(135deg, #ff6b9d, #ff8fb3); }
-        .kid-card.will .age { background: linear-gradient(135deg, #4d9fff, #7bb8ff); }
-
-        .kid-card .motto {
-            color: #666;
-            font-size: 1rem;
-            line-height: 1.6;
-        }
-
-        .gallery {
-            margin: 3rem 0;
-        }
-        .gallery h2 {
+        .nav a {
+            text-decoration: none;
+            color: inherit;
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 1.5rem 2.5rem;
             text-align: center;
-            font-size: 1.8rem;
-            color: #555;
-            margin-bottom: 1.5rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            min-width: 200px;
         }
-        .gallery-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 1rem;
+        .nav a:hover {
+            border-color: #888;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
         }
-        .gallery-item {
-            aspect-ratio: 1;
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2.5rem;
-            transition: transform 0.3s ease;
+        .nav a .label {
+            font-size: 1.1rem;
+            font-weight: 500;
+            display: block;
+            margin-bottom: 0.3rem;
         }
-        .gallery-item:hover { transform: scale(1.05); }
-
-        .timeline {
-            margin: 3rem 0;
+        .nav a .desc {
+            font-size: 0.85rem;
+            color: #999;
         }
-        .timeline h2 {
-            text-align: center;
-            font-size: 1.8rem;
-            color: #555;
-            margin-bottom: 2rem;
-        }
-        .timeline-item {
-            background: white;
-            border-radius: 16px;
-            padding: 1.5rem;
-            margin-bottom: 1rem;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-        .timeline-icon {
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-            flex-shrink: 0;
-        }
-        .timeline-item:nth-child(odd) .timeline-icon { background: #fff0f5; }
-        .timeline-item:nth-child(even) .timeline-icon { background: #eef5ff; }
-        .timeline-content h3 { color: #333; margin-bottom: 0.3rem; }
-        .timeline-content p { color: #888; font-size: 0.95rem; }
-
         footer {
-            text-align: center;
-            padding: 3rem 0;
-            color: #aaa;
-            font-size: 0.9rem;
-        }
-        footer .hearts span {
-            display: inline-block;
-            animation: heartbeat 1.5s ease-in-out infinite;
-        }
-        @keyframes heartbeat {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.2); }
-        }
-
-        @media (max-width: 600px) {
-            .kids-section { grid-template-columns: 1fr; }
-            header h1 { font-size: 2.2rem; }
-            .gallery-grid { grid-template-columns: repeat(2, 1fr); }
+            margin-top: 4rem;
+            font-size: 0.8rem;
+            color: #bbb;
         }
     </style>
 </head>
 <body>
-    <div class="decorations">
-        <span class="decoration" style="top:10%; left:5%; animation-delay:0s;">&#127774;</span>
-        <span class="decoration" style="top:20%; right:8%; animation-delay:1s;">&#127752;</span>
-        <span class="decoration" style="top:40%; left:10%; animation-delay:2s;">&#127800;</span>
-        <span class="decoration" style="top:60%; right:5%; animation-delay:0.5s;">&#11088;</span>
-        <span class="decoration" style="top:75%; left:8%; animation-delay:1.5s;">&#127813;</span>
-        <span class="decoration" style="top:85%; right:12%; animation-delay:3s;">&#128045;</span>
-    </div>
-
-    <div class="container">
-        <header>
-            <h1>Candie & Will</h1>
-            <p>我们的小天地 &#127775;</p>
-        </header>
-
-        <section class="kids-section">
-            <div class="kid-card candie">
-                <div class="kid-avatar">&#127872;</div>
-                <h2>Candie</h2>
-                <span class="age">小公主</span>
-                <p class="motto">甜甜的笑容是最美的风景<br>每一天都充满糖果般的快乐</p>
-            </div>
-            <div class="kid-card will">
-                <div class="kid-avatar">&#128640;</div>
-                <h2>Will</h2>
-                <span class="age">小勇士</span>
-                <p class="motto">勇敢探索这个奇妙的世界<br>每一天都是新的冒险</p>
-            </div>
-        </section>
-
-        <section class="gallery">
-            <h2>&#128247; 我们的瞬间</h2>
-            <div class="gallery-grid">
-                <div class="gallery-item" style="background: linear-gradient(135deg, #ffeef5, #ffd5e5);">&#127880;</div>
-                <div class="gallery-item" style="background: linear-gradient(135deg, #eef5ff, #d5e5ff);">&#9968;</div>
-                <div class="gallery-item" style="background: linear-gradient(135deg, #f0ffe5, #d5ffcc);">&#127795;</div>
-                <div class="gallery-item" style="background: linear-gradient(135deg, #fff5e5, #ffe5cc);">&#9728;</div>
-                <div class="gallery-item" style="background: linear-gradient(135deg, #f5e5ff, #e5ccff);">&#128013;</div>
-                <div class="gallery-item" style="background: linear-gradient(135deg, #e5ffff, #ccffff);">&#128011;</div>
-            </div>
-        </section>
-
-        <section class="timeline">
-            <h2>&#128336; 成长时间线</h2>
-            <div class="timeline-item">
-                <div class="timeline-icon">&#128118;</div>
-                <div class="timeline-content">
-                    <h3>网站上线啦</h3>
-                    <p>2026年4月 - 我们的小天地正式开张！</p>
-                </div>
-            </div>
-            <div class="timeline-item">
-                <div class="timeline-icon">&#127881;</div>
-                <div class="timeline-content">
-                    <h3>更多精彩即将到来</h3>
-                    <p>爸爸妈妈会在这里记录我们的成长故事...</p>
-                </div>
-            </div>
-        </section>
-
-        <footer>
-            <div class="hearts">
-                <span>&#128149;</span>
-                <span>&#128149;</span>
-                <span>&#128149;</span>
-            </div>
-            <p>candiewill.com &copy; 2026 - Made with &#10084;&#65039;</p>
-        </footer>
-    </div>
+    <h1>Candie & Will</h1>
+    <nav class="nav">
+        <a href="mc-platformer/">
+            <span class="label">方块跳跃</span>
+            <span class="desc">MC 风格平台跳跃小游戏</span>
+        </a>
+    </nav>
+    <footer>candiewill.com</footer>
 </body>
 </html>
