@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<!--
+  《方块跳跃》单页入口：像素风 HUD + 960×540 画布 + 全屏遮罩 overlay。
+  脚本须先加载 audio.js（提供 window.GameAudio），再加载 game.js。
+  与 JS 约定的元素 id：game, level, score, timer, hp, life-stock, ammo, overlay, overlay-title,
+  overlay-msg, overlay-actions, overlay-btn, overlay-btn-secondary, overlay-btn-tertiary, overlay-btn-settings, restart。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>方块跳跃 · MC 小游戏</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="hud">
+      <div class="brand">
+        <span class="pixel-icon" aria-hidden="true"></span>
+        <h1>方块跳跃</h1>
+      </div>
+      <div class="stats">
+        <span class="stat">关卡 <strong id="level">1/5</strong></span>
+        <span class="stat">蓝钻 <strong id="score">0</strong></span>
+        <span class="stat">用时 <strong id="timer">0:00</strong></span>
+        <span class="stat">血量 <strong id="hp">6</strong></span>
+        <span class="stat">生命 <strong id="life-stock">5</strong></span>
+        <span class="stat">弹药 <strong id="ammo">5</strong></span>
+      </div>
+    </header>
+    <canvas id="game" width="960" height="540" aria-label="游戏画布"></canvas>
+    <footer class="help">
+      终点红钻过关 · 蓝钻加分 · 苦力怕在地面左右巡逻 · 幻翼在空中追击 · <kbd>A</kbd><kbd>D</kbd> 移动 · <kbd>W</kbd> / <kbd>↑</kbd> 二段跳 · 通关第 1 关后获鞘翅，二段跳用完后空中缓降，滑翔时 <kbd>↓</kbd> / <kbd>S</kbd> 加快下落 · <kbd>空格</kbd> 靠近苦力怕或贴近幻翼时为砍刀，否则有弹药时对幻翼射击 · 受伤或坠落扣血量，血量扣尽消耗 1 点生命；生命用尽则游戏失败 · <kbd>回车</kbd> 从第一关重来
+      <button type="button" id="restart" class="btn">重新开始</button>
+    </footer>
+    <div id="overlay" class="overlay hidden">
+      <div class="card">
+        <h2 id="overlay-title">游戏结束</h2>
+        <div id="overlay-msg" class="overlay-msg">再试一次？</div>
+        <div id="overlay-actions" class="overlay-actions">
+          <button type="button" id="overlay-btn" class="btn primary">开始</button>
+          <button type="button" id="overlay-btn-secondary" class="btn hidden">
+            游戏排行榜
+          </button>
+          <button type="button" id="overlay-btn-tertiary" class="btn hidden">
+            武器外观
+          </button>
+          <button type="button" id="overlay-btn-settings" class="btn hidden">
+            游戏设置
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="audio.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
