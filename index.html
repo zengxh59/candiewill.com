@@ -6,67 +6,112 @@
     <title>Candie & Will</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-            background: #fafafa;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #FFF8F0;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            color: #333;
+            padding: 2rem 1rem;
+            color: #374151;
         }
+
         h1 {
-            font-size: 2.4rem;
-            font-weight: 300;
-            letter-spacing: 0.05em;
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            font-size: 1rem;
+            color: #6B7280;
             margin-bottom: 2.5rem;
         }
+
         .nav {
             display: flex;
-            gap: 2rem;
+            gap: 1.5rem;
             flex-wrap: wrap;
             justify-content: center;
+            max-width: 600px;
         }
+
         .nav a {
             text-decoration: none;
             color: inherit;
-            border: 1px solid #ddd;
-            border-radius: 12px;
-            padding: 1.5rem 2.5rem;
+            background: white;
+            border-radius: 16px;
+            padding: 2rem 2.5rem;
             text-align: center;
-            transition: border-color 0.2s, box-shadow 0.2s;
-            min-width: 200px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            transition: transform 0.2s, box-shadow 0.2s;
+            min-width: 220px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.75rem;
         }
+
         .nav a:hover {
-            border-color: #888;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
         }
+
+        .nav a:active {
+            transform: scale(0.97);
+        }
+
+        .nav a .icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: white;
+        }
+
+        .nav a.game .icon {
+            background: linear-gradient(135deg, #60A5FA, #3B82F6);
+        }
+
+        .nav a.tutor .icon .icon {
+            background: linear-gradient(135deg, #F472B6, #EC4899);
+        }
+
         .nav a .label {
-            font-size: 1.1rem;
-            font-weight: 500;
-            display: block;
-            margin-bottom: 0.3rem;
+            font-size: 1.125rem;
+            font-weight: 600;
         }
+
         .nav a .desc {
-            font-size: 0.85rem;
-            color: #999;
+            font-size: 0.875rem;
+            color: #9CA3AF;
         }
+
         footer {
-            margin-top: 4rem;
+            margin-top: 3rem;
             font-size: 0.8rem;
-            color: #bbb;
+            color: #D1D5DB;
         }
     </style>
 </head>
 <body>
     <h1>Candie & Will</h1>
+    <p class="subtitle">我们的小天地</p>
     <nav class="nav">
-        <a href="mc-platformer/">
+        <a href="mc-platformer/" class="game">
+            <div class="icon">&#127918;</div>
             <span class="label">方块跳跃</span>
             <span class="desc">MC 风格平台跳跃小游戏</span>
         </a>
-        <a href="typing-tutor/dist/">
+        <a href="typing-tutor/dist/" class="tutor">
+            <div class="icon">&#9000;</div>
             <span class="label">打字练习</span>
             <span class="desc">趣味键盘指法学习</span>
         </a>
