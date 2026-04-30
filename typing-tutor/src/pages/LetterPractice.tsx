@@ -141,7 +141,7 @@ function LevelPlay({ childId, level, accent, onFinish }: {
         </span>
       </div>
 
-      <div className="flex gap-4 justify-center mb-4 text-sm text-gray-600">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 justify-center mb-4 text-sm text-gray-600">
         <span>Correct: <strong className="text-green-500">{practice.correct}</strong></span>
         <span>Errors: <strong className="text-red-400">{practice.errors}</strong></span>
         <span>Streak: <strong style={{ color: accent }}>{practice.currentStreak}</strong></span>
@@ -150,10 +150,10 @@ function LevelPlay({ childId, level, accent, onFinish }: {
 
       <ProgressBar progress={practice.progress} />
 
-      <div className="my-6 text-center">
+      <div className="my-4 sm:my-6 text-center">
         {practice.currentTarget && (
           <div
-            className="inline-block text-8xl font-bold rounded-2xl p-6 transition-all duration-200"
+            className="inline-block text-6xl sm:text-8xl font-bold rounded-2xl p-3 sm:p-6 transition-all duration-200"
             style={{
               color: practice.feedback === 'correct' ? '#34D399'
                 : practice.feedback === 'wrong' ? '#F87171'

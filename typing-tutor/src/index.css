@@ -11,3 +11,15 @@ body {
 * {
   -webkit-tap-highlight-color: transparent;
 }
+
+.keyboard-scaler {
+  display: flex;
+  justify-content: center;
+}
+
+@media (max-width: 639px) {
+  .keyboard-scaler {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}

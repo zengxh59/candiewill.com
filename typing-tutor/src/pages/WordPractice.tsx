@@ -152,7 +152,7 @@ function WordPlay({ childId, accent, onFinish }: {
 
   return (
     <Layout>
-      <div className="flex gap-4 justify-center mb-4 text-sm text-gray-600">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 justify-center mb-4 text-sm text-gray-600">
         <span>Correct: <strong className="text-green-500">{allCorrect}</strong></span>
         <span>Errors: <strong className="text-red-400">{allErrors}</strong></span>
         <span>Streak: <strong style={{ color: accent }}>{streak}</strong></span>
@@ -160,7 +160,7 @@ function WordPlay({ childId, accent, onFinish }: {
 
       <ProgressBar progress={progress} />
 
-      <div className="my-6 text-center">
+      <div className="my-4 sm:my-6 text-center">
         <div className="text-sm text-gray-400 mb-2">
           Word {wordIndex + 1} of {wordList.length}
         </div>
@@ -168,7 +168,7 @@ function WordPlay({ childId, accent, onFinish }: {
           {currentWord.split('').map((ch, i) => (
             <span
               key={i}
-              className="inline-block text-5xl font-bold"
+              className="inline-block text-3xl sm:text-5xl font-bold"
               style={{
                 color: i < charIndex ? '#34D399'
                   : i === charIndex ? (feedback === 'wrong' ? '#F87171' : '#374151')

@@ -65,7 +65,7 @@ export function FingerGuide() {
         ))}
       </div>
 
-      <div className="flex justify-center overflow-x-auto">
+      <div className="keyboard-scaler">
         <div
           style={{
             backgroundColor: '#1d1d1f',

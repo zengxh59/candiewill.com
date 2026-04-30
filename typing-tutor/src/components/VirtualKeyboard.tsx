@@ -110,7 +110,7 @@ export function VirtualKeyboard({ targetKey, wrongKey, correctKey }: VirtualKeyb
   const { pressedKey } = useKeyPress();
 
   return (
-    <div className="flex justify-center py-4 select-none overflow-x-auto">
+    <div className="keyboard-scaler py-4 select-none">
       <div
         style={{
           backgroundColor: '#1d1d1f',

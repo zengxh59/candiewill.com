@@ -20,24 +20,36 @@
         }
 
         h1 {
-            font-size: 2.5rem;
+            font-size: 2rem;
             font-weight: 700;
             letter-spacing: -0.02em;
             margin-bottom: 0.5rem;
         }
 
+        @media (min-width: 640px) {
+            h1 { font-size: 2.5rem; }
+        }
+
         .subtitle {
             font-size: 1rem;
             color: #6B7280;
-            margin-bottom: 2.5rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (min-width: 640px) {
+            .subtitle { margin-bottom: 2.5rem; }
         }
 
         .nav {
             display: flex;
-            gap: 1.5rem;
+            gap: 1rem;
             flex-wrap: wrap;
             justify-content: center;
             max-width: 600px;
+        }
+
+        @media (min-width: 640px) {
+            .nav { gap: 1.5rem; }
         }
 
         .nav a {
@@ -45,15 +57,21 @@
             color: inherit;
             background: white;
             border-radius: 16px;
-            padding: 2rem 2.5rem;
+            padding: 1.5rem 1rem;
             text-align: center;
             box-shadow: 0 1px 3px rgba(0,0,0,0.06);
             transition: transform 0.2s, box-shadow 0.2s;
-            min-width: 220px;
+            flex: 1 1 0;
+            max-width: 280px;
+            min-width: 140px;
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 0.75rem;
+        }
+
+        @media (min-width: 640px) {
+            .nav a { padding: 2rem 2.5rem; max-width: none; min-width: 220px; }
         }
 
         .nav a:hover {

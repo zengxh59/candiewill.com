@@ -156,7 +156,7 @@ function PinyinPlay({ childId, accent, onFinish }: {
 
   return (
     <Layout>
-      <div className="flex gap-4 justify-center mb-4 text-sm text-gray-600">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 justify-center mb-4 text-sm text-gray-600">
         <span>Correct: <strong className="text-green-500">{allCorrect}</strong></span>
         <span>Errors: <strong className="text-red-400">{allErrors}</strong></span>
         <span>Streak: <strong style={{ color: accent }}>{streak}</strong></span>
@@ -164,8 +164,8 @@ function PinyinPlay({ childId, accent, onFinish }: {
 
       <ProgressBar progress={progress} />
 
-      <div className="my-6 text-center">
-        <div className="text-5xl font-bold text-gray-800 mb-4">
+      <div className="my-4 sm:my-6 text-center">
+        <div className="text-4xl sm:text-5xl font-bold text-gray-800 mb-3 sm:mb-4">
           {currentWord?.chinese}
         </div>
         <div className="text-sm text-gray-400 mb-2">
@@ -175,7 +175,7 @@ function PinyinPlay({ childId, accent, onFinish }: {
           {pinyin.split('').map((ch, i) => (
             <span
               key={i}
-              className="inline-block text-4xl font-bold"
+              className="inline-block text-2xl sm:text-4xl font-bold"
               style={{
                 color: i < charIndex ? '#34D399'
                   : i === charIndex ? (feedback === 'wrong' ? '#F87171' : '#374151')
