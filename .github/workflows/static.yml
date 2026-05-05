@@ -27,6 +27,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install and build three-player-chinese-chess
+        run: |
+          cd three-player-chinese-chess
+          npm ci
+          npm run build
       - name: Install and build typing-tutor
         run: |
           cd typing-tutor

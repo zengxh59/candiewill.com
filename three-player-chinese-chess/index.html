@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>三人中国象棋</title>
+  </head>
+  <body>
+    <section id="start-screen" class="start-screen">
+      <div class="start-panel">
+        <h1>三人中国象棋</h1>
+        <fieldset class="rule-group mode-group">
+          <legend>游戏模式</legend>
+          <label class="rule-option mode-option">
+            <input type="radio" name="game-mode" value="ai" checked />
+            <span>
+              <strong>AI对弈</strong>
+              <small>你执魏国，蜀、吴由 AI 行棋</small>
+            </span>
+          </label>
+          <label class="rule-option mode-option is-disabled">
+            <input type="radio" name="game-mode" value="online" disabled />
+            <span>
+              <strong>联机在线</strong>
+              <small>功能预留，后续开放</small>
+            </span>
+          </label>
+        </fieldset>
+        <button id="start-game" class="primary-action" type="button">开始游戏</button>
+        <details class="settings-details">
+          <summary>游戏设置</summary>
+          <fieldset class="rule-group">
+            <legend>出局条件</legend>
+            <label class="rule-option">
+              <input type="radio" name="defeat-condition" value="checkmate" />
+              <span>
+                <strong>主公被将死</strong>
+                <small>以无法解除将军判定出局</small>
+              </span>
+            </label>
+            <label class="rule-option">
+              <input type="radio" name="defeat-condition" value="capture" checked />
+              <span>
+                <strong>主公被吃掉</strong>
+                <small>以实际吃子判定出局</small>
+              </span>
+            </label>
+          </fieldset>
+          <fieldset class="rule-group">
+            <legend>出局棋子处理</legend>
+            <label class="rule-option">
+              <input type="radio" name="defeated-piece-mode" value="remove" />
+              <span>
+                <strong>移除</strong>
+                <small>出局后棋子全部移除</small>
+              </span>
+            </label>
+            <label class="rule-option">
+              <input type="radio" name="defeated-piece-mode" value="block" checked />
+              <span>
+                <strong>障碍</strong>
+                <small>出局棋子留在棋盘上并变为浅灰色</small>
+              </span>
+            </label>
+            <label class="rule-option">
+              <input type="radio" name="defeated-piece-mode" value="takeover" />
+              <span>
+                <strong>接管</strong>
+                <small>吃掉主帅的国家接管出局方剩余棋子</small>
+              </span>
+            </label>
+          </fieldset>
+        </details>
+      </div>
+    </section>
+    <main class="app-shell">
+      <button id="show-settings" class="settings-button" type="button">退出游戏</button>
+      <div id="status" class="status" aria-live="polite"></div>
+      <canvas id="board" width="1100" height="980" aria-label="三人中国象棋棋盘线框"></canvas>
+    </main>
+    <script type="module" src="/src/app/web-entry.ts"></script>
+  </body>
+</html>

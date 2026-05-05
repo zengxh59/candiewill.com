@@ -1,0 +1,268 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.start-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.start-screen.is-hidden {
+  display: none;
+}
+
+.start-panel {
+  width: min(92vw, 520px);
+  padding: 28px;
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.12);
+}
+
+.start-panel h1 {
+  margin: 0 0 20px;
+  font-size: 28px;
+  text-align: center;
+}
+
+.mode-group {
+  margin-bottom: 0;
+}
+
+.rule-group {
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+}
+
+.rule-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.rule-group legend {
+  margin-bottom: 12px;
+  font-weight: 700;
+}
+
+.rule-option {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.mode-option {
+  min-height: 72px;
+}
+
+.rule-option:has(input:checked) {
+  border-color: #111;
+  background: #fafafa;
+}
+
+.rule-option.is-disabled {
+  color: #8a8a8a;
+  background: #f3f3f3;
+  cursor: not-allowed;
+}
+
+.rule-option + .rule-option {
+  margin-top: 10px;
+}
+
+.rule-option input {
+  margin-top: 3px;
+}
+
+.rule-option strong,
+.rule-option small {
+  display: block;
+}
+
+.rule-option small {
+  margin-top: 4px;
+  color: #555;
+}
+
+.primary-action,
+.settings-button {
+  border: 0;
+  border-radius: 8px;
+  background: #111;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.primary-action {
+  width: 100%;
+  margin-top: 18px;
+  padding: 12px 16px;
+  font-weight: 700;
+}
+
+.settings-details {
+  margin-top: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.settings-details summary {
+  padding: 12px 14px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-details[open] {
+  padding-bottom: 14px;
+}
+
+.settings-details .rule-group {
+  margin: 0;
+  padding: 12px 14px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+  gap: 10px;
+}
+
+.settings-details .rule-group legend {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
+.settings-details .rule-option + .rule-option {
+  margin-top: 0;
+}
+
+.settings-details .rule-option {
+  min-height: 88px;
+}
+
+.app-shell {
+  position: relative;
+  width: min(96vw, 1000px);
+}
+
+.settings-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  padding: 6px 10px;
+  font-size: 14px;
+  background: #f5f5f5;
+  color: #111;
+  border: 1px solid #d8d8d8;
+}
+
+.status {
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 8px 12px;
+  font-size: 16px;
+  color: #111;
+}
+
+.turn-list {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 58px);
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid #d8d8d8;
+  border-radius: 999px;
+}
+
+.turn-pill {
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  font-weight: 700;
+  font-size: 13px;
+  background: #f7f7f7;
+}
+
+.turn-wei {
+  color: #d32020;
+}
+
+.turn-shu {
+  color: #14613a;
+}
+
+.turn-wu {
+  color: #123f7a;
+}
+
+.turn-pill.is-active {
+  background: #fff;
+  border-color: currentColor;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06);
+}
+
+.status-message {
+  min-height: 30px;
+  display: inline-grid;
+  place-items: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #f7f7f7;
+}
+
+.status-message.current {
+  font-weight: 700;
+}
+
+.status-message.check {
+  color: #b00020;
+  background: #fff0f2;
+}
+
+.status-message.winner {
+  color: #fff;
+  background: #111;
+  font-weight: 700;
+}
+
+.status-message.rule {
+  color: #444;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+@media (max-width: 560px) {
+  .start-panel {
+    padding: 20px;
+  }
+
+  .settings-details .rule-group {
+    grid-template-columns: 1fr;
+  }
+}
