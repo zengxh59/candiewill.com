@@ -63,6 +63,23 @@ describe("AI player", () => {
     });
   });
 
+  it("uses the general to capture a safe intruder in its own palace", () => {
+    const state = stateWith(
+      [
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wei-cannon", "cannon", "炮", "J4", "wei"),
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+      "wu",
+    );
+
+    expect(chooseAiMove(state, "wu")).toMatchObject({
+      pieceId: "wu-general",
+      target: "J4",
+    });
+  });
+
   it("chooses the first Shu response quickly after Wei opens", () => {
     const state = applyMove(createInitialGameState(), "wei-soldier-5", "A5");
     const startedAt = performance.now();

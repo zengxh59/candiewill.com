@@ -35,6 +35,12 @@ export function chooseAiMove(state: GameState, kingdom: Kingdom): AiMove | null 
     return null;
   }
 
+  const urgentKingDefense = actions.find((action) => isKingDefenseCapture(state, action, kingdom));
+
+  if (urgentKingDefense) {
+    return urgentKingDefense;
+  }
+
   const generalCapture = actions.find((action) => capturedPieceAt(state, action.pieceId, action.target)?.type === "general");
 
   if (generalCapture) {
@@ -117,7 +123,9 @@ function getCandidateActions(state: GameState, kingdom: Kingdom): AiMove[] {
 
     return scoreDiff || compareAction(left, right);
   });
-  const highPriorityActions = actions.filter((action) => capturedPieceAt(state, action.pieceId, action.target)?.type === "general");
+  const highPriorityActions = actions.filter((action) => {
+    return capturedPieceAt(state, action.pieceId, action.target)?.type === "general" || isKingDefenseCapture(state, action, kingdom);
+  });
   const scanActions = uniqueActions([...highPriorityActions, ...actions.slice(0, safetyScanLimit)]);
   const safeActions = scanActions.filter((action) => doesNotLeaveKingdomInCheck(state, action, kingdom));
   const candidates = safeActions.length ? safeActions : scanActions;
@@ -157,10 +165,15 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom): n
   }
 
   if (capturedPiece) {
-    const movingValue = pieceValue(movingPiece);
     const capturedValue = pieceValue(capturedPiece);
 
-    score += capturedValue * 3 + (capturedValue - movingValue) * 5;
+    if (movingPiece.type === "general") {
+      score += kingDefenseCaptureScore(state, action, movingPiece, capturedPiece, kingdom);
+    } else {
+      const movingValue = pieceValue(movingPiece);
+
+      score += capturedValue * 3 + (capturedValue - movingValue) * 5;
+    }
 
     if (capturedPiece.type === "general") {
       score += 90_000;
@@ -170,7 +183,7 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom): n
     score -= openingRaidPenalty(state, action, movingPiece, capturedPiece);
   }
 
-  if (movingPiece.type === "general") {
+  if (movingPiece.type === "general" && !capturedPiece) {
     score -= 220;
   }
 
@@ -357,7 +370,7 @@ function exchangeRiskPenalty(
   capturedPiece: Piece,
   kingdom: Kingdom,
 ): number {
-  if (capturedPiece.type === "general") {
+  if (movingPiece.type === "general" || capturedPiece.type === "general") {
     return 0;
   }
 
@@ -374,6 +387,30 @@ function exchangeRiskPenalty(
   const risk = equalOrBadTrade ? movingValue * 2.8 : movingValue * 1.05;
 
   return risk;
+}
+
+function kingDefenseCaptureScore(
+  state: GameState,
+  action: AiMove,
+  movingPiece: Piece,
+  capturedPiece: Piece,
+  kingdom: Kingdom,
+): number {
+  let score = pieceValue(capturedPiece) * 6;
+
+  if (isInsideOwnPalace(kingdom, action.target)) {
+    score += 22_000;
+  }
+
+  if (getLegalMoves(state, capturedPiece).includes(movingPiece.position)) {
+    score += 18_000;
+  }
+
+  if (capturedPiece.type === "cannon" || capturedPiece.type === "chariot" || capturedPiece.type === "horse") {
+    score += 7_000;
+  }
+
+  return score;
 }
 
 function openingRaidPenalty(state: GameState, action: AiMove, movingPiece: Piece, capturedPiece: Piece): number {
@@ -414,6 +451,25 @@ function isOriginalBackRank(piece: Piece): boolean {
 
 function isOwnKingdomPoint(kingdom: Kingdom, point: PointId): boolean {
   return (kingdomRows[kingdom] as readonly string[]).includes(parsePointId(point).row);
+}
+
+function isInsideOwnPalace(kingdom: Kingdom, point: PointId): boolean {
+  const rows = kingdomRows[kingdom] as readonly string[];
+  const palaceRows = rows.slice(2);
+  const { row, col } = parsePointId(point);
+
+  return palaceRows.includes(row) && col >= 4 && col <= 6;
+}
+
+function isKingDefenseCapture(state: GameState, action: AiMove, kingdom: Kingdom): boolean {
+  const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+  const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+  if (!movingPiece || movingPiece.type !== "general" || !capturedPiece) {
+    return false;
+  }
+
+  return isInsideOwnPalace(kingdom, action.target) || getLegalMoves(state, capturedPiece).includes(movingPiece.position);
 }
 
 function tacticalStabilityScore(state: GameState, aiKingdom: Kingdom): number {

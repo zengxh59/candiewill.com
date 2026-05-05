@@ -19,6 +19,8 @@ body {
   display: grid;
   place-items: center;
   padding: 24px;
+  overflow: auto;
+  overscroll-behavior: contain;
   background: rgba(255, 255, 255, 0.96);
 }
 
@@ -28,6 +30,9 @@ body {
 
 .start-panel {
   width: min(92vw, 520px);
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  overscroll-behavior: contain;
   padding: 28px;
   border: 1px solid #d8d8d8;
   border-radius: 8px;
@@ -63,9 +68,10 @@ body {
 .rule-option {
   display: grid;
   grid-template-columns: 22px 1fr;
-  gap: 10px;
+  column-gap: 10px;
+  row-gap: 2px;
   align-items: start;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid #e0e0e0;
   border-radius: 8px;
   cursor: pointer;
@@ -94,13 +100,22 @@ body {
   margin-top: 3px;
 }
 
+.rule-option span {
+  display: contents;
+}
+
+.rule-option strong {
+  grid-column: 2;
+}
+
 .rule-option strong,
 .rule-option small {
   display: block;
 }
 
 .rule-option small {
-  margin-top: 4px;
+  grid-column: 1 / -1;
+  margin-top: 2px;
   color: #555;
 }
 
@@ -147,6 +162,11 @@ body {
   gap: 10px;
 }
 
+.settings-details .rule-group + .rule-group {
+  margin-top: 16px;
+  padding-top: 6px;
+}
+
 .settings-details .rule-group legend {
   grid-column: 1 / -1;
   margin-bottom: 0;
@@ -157,33 +177,35 @@ body {
 }
 
 .settings-details .rule-option {
-  min-height: 88px;
+  min-height: 66px;
 }
 
 .app-shell {
   position: relative;
-  width: min(96vw, 1000px, calc(112.24vh - 82px));
-  width: min(96vw, 1000px, calc(112.24dvh - 82px));
+  width: min(calc(100vw - 16px), 1000px, calc(105.77vh - 80px));
+  width: min(calc(100vw - 16px), 1000px, calc(105.77dvh - 80px));
 }
 
 .settings-button {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: clamp(4px, 1vw, 10px);
+  right: clamp(4px, 1vw, 10px);
   z-index: 2;
-  padding: 6px 10px;
-  font-size: 14px;
+  min-width: 56px;
+  min-height: 32px;
+  padding: clamp(4px, 0.9vw, 6px) clamp(8px, 1.4vw, 10px);
+  font-size: clamp(12px, 1.55vw, 14px);
   background: #f5f5f5;
   color: #111;
   border: 1px solid #d8d8d8;
 }
 
 .status {
-  min-height: 44px;
+  min-height: clamp(34px, 5vw, 44px);
   display: grid;
   place-items: center;
-  padding: 8px 12px;
-  font-size: 16px;
+  padding: clamp(4px, 1vw, 8px) clamp(6px, 1.4vw, 12px);
+  font-size: clamp(12px, 2vw, 16px);
   color: #111;
 }
 
@@ -226,12 +248,16 @@ body {
 }
 
 .status-message {
-  min-height: 30px;
+  min-height: clamp(24px, 4vw, 30px);
   display: inline-grid;
   place-items: center;
-  padding: 5px 12px;
+  max-width: 52vw;
+  padding: clamp(3px, 0.8vw, 5px) clamp(8px, 1.8vw, 12px);
   border-radius: 999px;
   background: #f7f7f7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status-message.current {
@@ -260,6 +286,10 @@ canvas {
 }
 
 @media (max-width: 560px) {
+  .app-shell {
+    width: min(calc(100vw - 4px), calc(105.77dvh - 62px));
+  }
+
   .start-panel {
     padding: 20px;
   }

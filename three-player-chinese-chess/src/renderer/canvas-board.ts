@@ -226,7 +226,7 @@ function drawRegionLabel(
   const numberFivePosition = labelPoint({ x: base.x, y: base.y + 28 }, board.rotation, geometry);
   const position = {
     x: numberFivePosition.x + board.regionOffset.x,
-    y: numberFivePosition.y + board.regionOffset.y,
+    y: numberFivePosition.y + board.regionOffset.y + (board.key === "wei" ? 16 : 0),
   };
   const isActive = uiState?.currentKingdom === board.key;
   const isThinking = uiState?.thinkingKingdom === board.key;
@@ -261,33 +261,7 @@ function drawRegionLabel(
   ctx.textBaseline = "middle";
   ctx.fillText(board.region, position.x, position.y);
 
-  if (isActive) {
-    ctx.font = "15px Arial, sans-serif";
-    ctx.fillStyle = color;
-    const label = regionTurnLabel(board.key, uiState);
-
-    if (label) {
-      ctx.fillText(label, position.x, position.y + 42);
-    }
-  }
-
   ctx.restore();
-}
-
-function regionTurnLabel(kingdom: Kingdom, uiState?: BoardUiState): string {
-  if (!uiState) {
-    return "";
-  }
-
-  if (uiState.thinkingKingdom === kingdom) {
-    return "";
-  }
-
-  if (uiState.mode === "ai") {
-    return kingdom === uiState.humanKingdom ? "玩家行棋" : "AI行棋";
-  }
-
-  return "行棋";
 }
 
 function drawVerticalText(ctx: CanvasRenderingContext2D, text: string, position: ScreenPoint, angle: number): void {
