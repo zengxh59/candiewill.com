@@ -29,7 +29,7 @@ export interface BoardUiState {
   thinkingKingdom: Kingdom | null;
   thinkingPhase: number;
   humanKingdom: Kingdom;
-  mode: "ai" | "online";
+  mode: "ai" | "online" | "ai-learning";
 }
 
 export interface BoardAnimation {

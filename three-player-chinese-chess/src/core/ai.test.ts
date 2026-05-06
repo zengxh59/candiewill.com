@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { chooseAiMove } from "./ai";
+import { aiScenarios } from "./ai-scenarios";
 import { createInitialGameState, type GameState } from "./game-state";
 import { getCheckedKingdoms } from "./moves";
 import type { Piece } from "./pieces";
 import { applyMove } from "./rules";
 
 describe("AI player", () => {
+  it("passes the shared AI scenario suite", () => {
+    for (const scenario of aiScenarios) {
+      const move = chooseAiMove(scenario.state, scenario.kingdom);
+
+      expect(move, scenario.title).not.toBeNull();
+
+      if (scenario.expected) {
+        expect(move, scenario.title).toMatchObject(scenario.expected);
+      }
+
+      if (scenario.avoid) {
+        expect(move, scenario.title).not.toMatchObject(scenario.avoid);
+      }
+    }
+  });
+
   it("prioritizes capturing a general when available", () => {
     const state = stateWith(
       [
