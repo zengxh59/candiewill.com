@@ -26,21 +26,6 @@
             </span>
           </label>
         </fieldset>
-        <fieldset class="difficulty-group">
-          <legend>AI难度</legend>
-          <label>
-            <input type="radio" name="ai-difficulty" value="easy" />
-            <span>简单</span>
-          </label>
-          <label>
-            <input type="radio" name="ai-difficulty" value="medium" checked />
-            <span>中等</span>
-          </label>
-          <label>
-            <input type="radio" name="ai-difficulty" value="hard" />
-            <span>困难</span>
-          </label>
-        </fieldset>
         <button id="start-game" class="primary-action" type="button">开始</button>
         <details class="settings-details">
           <summary>对弈设置</summary>
@@ -82,6 +67,30 @@
               <span>
                 <strong>接管</strong>
                 <small>吃掉主帅的国家接管出局方剩余棋子</small>
+              </span>
+            </label>
+          </fieldset>
+          <fieldset class="rule-group">
+            <legend>AI难度</legend>
+            <label class="rule-option">
+              <input type="radio" name="ai-difficulty" value="easy" />
+              <span>
+                <strong>简单</strong>
+                <small>反应更快，适合熟悉规则</small>
+              </span>
+            </label>
+            <label class="rule-option">
+              <input type="radio" name="ai-difficulty" value="medium" checked />
+              <span>
+                <strong>中等</strong>
+                <small>攻守均衡，推荐日常对局</small>
+              </span>
+            </label>
+            <label class="rule-option">
+              <input type="radio" name="ai-difficulty" value="hard" />
+              <span>
+                <strong>困难</strong>
+                <small>思考更深，挑战更高</small>
               </span>
             </label>
           </fieldset>
