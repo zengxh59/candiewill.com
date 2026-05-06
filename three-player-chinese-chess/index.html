@@ -26,6 +26,21 @@
             </span>
           </label>
         </fieldset>
+        <fieldset class="difficulty-group">
+          <legend>AI难度</legend>
+          <label>
+            <input type="radio" name="ai-difficulty" value="easy" />
+            <span>简单</span>
+          </label>
+          <label>
+            <input type="radio" name="ai-difficulty" value="medium" checked />
+            <span>中等</span>
+          </label>
+          <label>
+            <input type="radio" name="ai-difficulty" value="hard" />
+            <span>困难</span>
+          </label>
+        </fieldset>
         <button id="start-game" class="primary-action" type="button">开始</button>
         <details class="settings-details">
           <summary>对弈设置</summary>
@@ -82,19 +97,20 @@
               <legend>思考强度</legend>
               <label>
                 <input type="radio" name="ai-learning-intensity" value="fast" />
-                <span>快速</span>
+                <span>简单·快速</span>
               </label>
               <label>
                 <input type="radio" name="ai-learning-intensity" value="normal" checked />
-                <span>常规</span>
+                <span>中等·常规</span>
               </label>
               <label>
                 <input type="radio" name="ai-learning-intensity" value="deep" />
-                <span>深度</span>
+                <span>困难·深度</span>
               </label>
             </fieldset>
           </div>
           <button id="ai-start-learning" class="ai-learning-start" type="button">启动自学习</button>
+          <button id="ai-download-learning" class="ai-learning-download" type="button" disabled>下载学习数据</button>
           <output id="ai-learning-output" class="ai-learning-output">自动对弈会进入棋盘，由 AI 控制魏、蜀、吴三国。浏览器会保存学习记录；长期写回源码请运行 npm run ai:learn:loop。</output>
         </details>
       </div>

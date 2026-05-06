@@ -105,6 +105,51 @@ describe("AI player", () => {
     expect(move).not.toBeNull();
     expect(performance.now() - startedAt).toBeLessThan(300);
   });
+
+  it("can sample a different strong candidate when exploration is enabled", () => {
+    const state = applyMove(createInitialGameState(), "wei-soldier-5", "A5");
+    const greedy = chooseAiMove(state, "shu");
+    const randomValues = [0, 0.99];
+    const exploratory = chooseAiMove(state, "shu", undefined, {
+      random: () => randomValues.shift() ?? 0.99,
+      explorationRate: 1,
+      explorationTop: 8,
+      explorationSlack: Number.POSITIVE_INFINITY,
+      explorationTemperature: 1_000_000,
+      openingSearchDepth: 0,
+    });
+
+    expect(exploratory).not.toBeNull();
+    expect(exploratory).not.toEqual(greedy);
+  });
+
+  it("avoids immediately reversing a quiet move when other useful moves exist", () => {
+    const state: GameState = {
+      ...stateWith(
+        [
+          piece("wu-chariot", "chariot", "车", "F5", "wu"),
+          piece("wu-general", "general", "吴", "J4", "wu"),
+          piece("wei-general", "general", "魏", "E4", "wei"),
+          piece("shu-general", "general", "蜀", "O5", "shu"),
+        ],
+        "wu",
+      ),
+      moveHistory: [
+        {
+          pieceId: "wu-chariot",
+          kingdom: "wu",
+          from: "A5",
+          target: "F5",
+          capturedPieceId: null,
+        },
+      ],
+    };
+
+    expect(chooseAiMove(state, "wu")).not.toMatchObject({
+      pieceId: "wu-chariot",
+      target: "A5",
+    });
+  });
 });
 
 function stateWith(pieces: Piece[], currentKingdom: GameState["currentKingdom"]): GameState {

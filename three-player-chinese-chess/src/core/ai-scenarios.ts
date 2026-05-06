@@ -81,6 +81,21 @@ export const aiScenarios: AiScenario[] = [
       "wu",
     ),
   },
+  {
+    id: "ignore-defeated-blocker-general",
+    title: "障碍模式下不把出局主公当作优先吃子目标",
+    kingdom: "wu",
+    avoid: { pieceId: "wu-chariot", target: "A5" },
+    state: stateWith(
+      [
+        piece("wu-chariot", "chariot", "车", "F5", "wu"),
+        piece("wu-general", "general", "吴", "J4", "wu"),
+        { ...piece("wei-general", "general", "魏", "A5", "wei"), defeated: true },
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+      "wu",
+    ),
+  },
 ];
 
 function stateWith(pieces: Piece[], currentKingdom: GameState["currentKingdom"]): GameState {

@@ -1,6 +1,6 @@
 import "../styles.css";
 import type { Kingdom, PointId } from "../core/board";
-import { chooseAiMove, evaluateAiState, type AiMove } from "../core/ai";
+import { chooseAiMove, evaluateAiState, type AiMove, type AiMoveOptions } from "../core/ai";
 import { defaultAiProfile, type AiProfile } from "../core/ai-profile";
 import { runAiBenchmark, tuneAiProfile } from "../core/ai-lab";
 import {
@@ -22,25 +22,36 @@ const startScreen = document.querySelector<HTMLElement>("#start-screen");
 const startButton = document.querySelector<HTMLButtonElement>("#start-game");
 const settingsButton = document.querySelector<HTMLButtonElement>("#show-settings");
 const aiStartLearningButton = document.querySelector<HTMLButtonElement>("#ai-start-learning");
+const aiDownloadLearningButton = document.querySelector<HTMLButtonElement>("#ai-download-learning");
 const aiLearningRoundsInput = document.querySelector<HTMLInputElement>("#ai-learning-rounds");
 const aiLearningOutput = document.querySelector<HTMLOutputElement>("#ai-learning-output");
 
-if (!canvas || !status || !startScreen || !startButton || !settingsButton || !aiStartLearningButton || !aiLearningRoundsInput || !aiLearningOutput) {
+if (!canvas || !status || !startScreen || !startButton || !settingsButton || !aiStartLearningButton || !aiDownloadLearningButton || !aiLearningRoundsInput || !aiLearningOutput) {
   throw new Error("Board canvas was not found.");
 }
 
 type GameMode = "ai" | "online" | "ai-learning";
+type AiDifficulty = "easy" | "medium" | "hard";
 type LearningIntensity = "fast" | "normal" | "deep";
 type LearningEndReason = "winner" | "timeout" | "repetition" | "ply-limit" | "no-move";
 
+interface StartSettings {
+  gameMode: GameMode;
+  aiDifficulty: AiDifficulty;
+  options: GameOptions;
+}
+
 interface LearningConfig {
   depth: number;
+  openingDepth: number;
   tuneIterations: number;
   timeLimitMs: number;
   moveDelayMs: number;
   maxPlies: number;
   explorationRate: number;
   explorationTop: number;
+  explorationSlack: number;
+  explorationTemperature: number;
 }
 
 interface LearningRoundRecord {
@@ -76,6 +87,7 @@ const humanKingdom: Kingdom = "wei";
 const aiProfileStorageKey = "three-player-chinese-chess.ai-profile";
 const aiLearningHistoryStorageKey = "three-player-chinese-chess.ai-learning-history";
 let currentGameMode: GameMode = "ai";
+let currentAiDifficulty: AiDifficulty = "medium";
 let aiTimer: number | null = null;
 let isAiThinking = false;
 let isAnimating = false;
@@ -188,6 +200,8 @@ startButton.addEventListener("click", () => {
   stopLearningSession();
   const settings = readStartSettings();
   currentGameMode = settings.gameMode;
+  currentAiDifficulty = settings.aiDifficulty;
+  activeAiProfile = profileForIntensity(intensityForDifficulty(settings.aiDifficulty));
   isAnimating = false;
   currentAnimation = null;
   state = createInitialGameState(settings.options);
@@ -215,15 +229,22 @@ aiStartLearningButton.addEventListener("click", () => {
   startLearningSession();
 });
 
+aiDownloadLearningButton.addEventListener("click", () => {
+  downloadLearningData();
+});
+
+syncLearningDownloadButton();
 render();
 
-function readStartSettings(): { gameMode: GameMode; options: GameOptions } {
+function readStartSettings(): StartSettings {
   const gameMode = document.querySelector<HTMLInputElement>("input[name='game-mode']:checked");
+  const aiDifficulty = document.querySelector<HTMLInputElement>("input[name='ai-difficulty']:checked");
   const defeatedPieceMode = document.querySelector<HTMLInputElement>("input[name='defeated-piece-mode']:checked");
   const defeatCondition = document.querySelector<HTMLInputElement>("input[name='defeat-condition']:checked");
 
   return {
     gameMode: (gameMode?.value ?? "ai") as GameMode,
+    aiDifficulty: (aiDifficulty?.value ?? "medium") as AiDifficulty,
     options: {
       defeatedPieceMode: (defeatedPieceMode?.value ?? "block") as DefeatedPieceMode,
       defeatCondition: (defeatCondition?.value ?? "capture") as GameOptions["defeatCondition"],
@@ -259,8 +280,11 @@ async function runAiTurn(): Promise<void> {
         random: learningSession.random,
         explorationRate: learningSession.config.explorationRate,
         explorationTop: learningSession.config.explorationTop,
+        explorationSlack: learningSession.config.explorationSlack,
+        explorationTemperature: learningSession.config.explorationTemperature,
+        openingSearchDepth: learningSession.config.openingDepth,
       })
-    : chooseAiMove(state, kingdom, activeAiProfile);
+    : chooseAiMove(state, kingdom, activeAiProfile, aiMoveOptionsForDifficulty(currentAiDifficulty));
 
   if (!move) {
     isAiThinking = false;
@@ -598,33 +622,130 @@ function readLearningIntensity(): LearningIntensity {
 }
 
 function learningConfig(intensity: LearningIntensity): LearningConfig {
-  const base = cloneAiProfile(activeAiProfile);
+  activeAiProfile = profileForIntensity(intensity);
 
   switch (intensity) {
     case "fast":
-      activeAiProfile = {
+      return {
+        depth: 1,
+        openingDepth: 1,
+        tuneIterations: 6,
+        timeLimitMs: 2 * 60 * 1000,
+        moveDelayMs: 10,
+        maxPlies: 180,
+        explorationRate: 0.48,
+        explorationTop: 8,
+        explorationSlack: 1_300,
+        explorationTemperature: 820,
+      };
+    case "deep":
+      return {
+        depth: 3,
+        openingDepth: 2,
+        tuneIterations: 18,
+        timeLimitMs: 5 * 60 * 1000,
+        moveDelayMs: 24,
+        maxPlies: 300,
+        explorationRate: 0.3,
+        explorationTop: 5,
+        explorationSlack: 850,
+        explorationTemperature: 520,
+      };
+    case "normal":
+      return {
+        depth: 2,
+        openingDepth: 1,
+        tuneIterations: 10,
+        timeLimitMs: 3 * 60 * 1000,
+        moveDelayMs: 16,
+        maxPlies: 240,
+        explorationRate: 0.38,
+        explorationTop: 6,
+        explorationSlack: 1_050,
+        explorationTemperature: 660,
+      };
+  }
+}
+
+function profileForIntensity(intensity: LearningIntensity): AiProfile {
+  const base = cloneAiProfile(readStoredAiProfile());
+
+  switch (intensity) {
+    case "fast":
+      return {
         ...base,
         searchDepth: 1,
-        rootBeam: Math.min(base.rootBeam, 8),
-        responseBeam: Math.min(base.responseBeam, 3),
-        thirdPlayerBeam: Math.min(base.thirdPlayerBeam, 2),
+        rootBeam: 8,
+        responseBeam: 3,
+        thirdPlayerBeam: 2,
+        safetyScanLimit: 14,
       };
-      return { depth: 1, tuneIterations: 6, timeLimitMs: 2 * 60 * 1000, moveDelayMs: 10, maxPlies: 180, explorationRate: 0.34, explorationTop: 4 };
     case "deep":
-      activeAiProfile = {
+      return {
         ...base,
-        searchDepth: Math.max(base.searchDepth, 3),
-        rootBeam: Math.max(base.rootBeam, 16),
-        responseBeam: Math.max(base.responseBeam, 6),
-        thirdPlayerBeam: Math.max(base.thirdPlayerBeam, 4),
+        searchDepth: 3,
+        rootBeam: 16,
+        responseBeam: 6,
+        thirdPlayerBeam: 4,
+        safetyScanLimit: 24,
       };
-      return { depth: 3, tuneIterations: 18, timeLimitMs: 5 * 60 * 1000, moveDelayMs: 24, maxPlies: 300, explorationRate: 0.18, explorationTop: 3 };
     case "normal":
-      activeAiProfile = {
+      return {
         ...base,
-        searchDepth: Math.max(base.searchDepth, 2),
+        searchDepth: 2,
+        rootBeam: 12,
+        responseBeam: 5,
+        thirdPlayerBeam: 3,
+        safetyScanLimit: 18,
       };
-      return { depth: 2, tuneIterations: 10, timeLimitMs: 3 * 60 * 1000, moveDelayMs: 16, maxPlies: 240, explorationRate: 0.24, explorationTop: 3 };
+  }
+}
+
+function intensityForDifficulty(difficulty: AiDifficulty): LearningIntensity {
+  switch (difficulty) {
+    case "easy":
+      return "fast";
+    case "hard":
+      return "deep";
+    case "medium":
+      return "normal";
+  }
+}
+
+function aiMoveOptionsForDifficulty(difficulty: AiDifficulty): AiMoveOptions {
+  switch (difficulty) {
+    case "easy":
+      return {
+        openingSearchDepth: 1,
+        openingRootBeam: 5,
+        openingResponseBeam: 2,
+        openingThirdPlayerBeam: 1,
+      };
+    case "hard":
+      return {
+        openingSearchDepth: 2,
+        openingRootBeam: 12,
+        openingResponseBeam: 4,
+        openingThirdPlayerBeam: 2,
+      };
+    case "medium":
+      return {
+        openingSearchDepth: 1,
+        openingRootBeam: 8,
+        openingResponseBeam: 3,
+        openingThirdPlayerBeam: 1,
+      };
+  }
+}
+
+function difficultyForIntensity(intensity: LearningIntensity): AiDifficulty {
+  switch (intensity) {
+    case "fast":
+      return "easy";
+    case "deep":
+      return "hard";
+    case "normal":
+      return "medium";
   }
 }
 
@@ -666,7 +787,7 @@ function formatLearningProgress(session: LearningSession, done = false): string 
   const summary = [
     done ? "AI自动对弈自我提升完成" : `第${last?.round ?? session.currentRound}轮已完成`,
     `进度：${session.records.length}/${session.totalRounds}轮`,
-    `强度：${learningIntensityName(session.intensity)}，搜索深度：${session.config.depth}`,
+    `强度：${learningIntensityName(session.intensity)}，搜索深度：${session.config.depth}，开局深度：${session.config.openingDepth}`,
     `胜者统计：魏 ${winners.wei} / 蜀 ${winners.shu} / 吴 ${winners.wu}`,
   ];
 
@@ -688,19 +809,60 @@ function persistLearningHistory(session: LearningSession): void {
     totalRounds: session.totalRounds,
     completedRounds: session.records.length,
     intensity: session.intensity,
+    difficulty: difficultyForIntensity(session.intensity),
     config: session.config,
     records: session.records,
     profile: activeAiProfile,
   };
 
   window.localStorage.setItem(aiLearningHistoryStorageKey, JSON.stringify(payload));
+  syncLearningDownloadButton();
+}
+
+function syncLearningDownloadButton(): void {
+  aiDownloadLearningButton!.disabled = !window.localStorage.getItem(aiLearningHistoryStorageKey);
+}
+
+function downloadLearningData(): void {
+  const storedHistory = window.localStorage.getItem(aiLearningHistoryStorageKey);
+
+  if (!storedHistory) {
+    aiLearningOutput!.textContent = "暂无可下载的自学习数据。请先完成至少一轮自学习。";
+    syncLearningDownloadButton();
+    return;
+  }
+
+  let parsedHistory: { savedAt?: string };
+
+  try {
+    parsedHistory = JSON.parse(storedHistory) as { savedAt?: string };
+  } catch {
+    window.localStorage.removeItem(aiLearningHistoryStorageKey);
+    aiLearningOutput!.textContent = "自学习数据已损坏，已清除。请重新运行自学习。";
+    syncLearningDownloadButton();
+    return;
+  }
+
+  const savedAt = parsedHistory.savedAt ?? new Date().toISOString();
+  const filename = `three-player-chess-ai-learning-${savedAt.replace(/[:.]/g, "-")}.json`;
+  const blob = new Blob([`${JSON.stringify(parsedHistory, null, 2)}\n`], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  aiLearningOutput!.textContent = `学习数据已生成下载文件：${filename}\n建议保存到项目目录 ai-learning-exports/，后续可以把该 JSON 提供给我继续迭代。`;
 }
 
 function learningIntensityName(intensity: LearningIntensity): string {
   return {
-    fast: "快速",
-    normal: "常规",
-    deep: "深度",
+    fast: "简单（快速）",
+    normal: "中等（常规）",
+    deep: "困难（深度）",
   }[intensity];
 }
 

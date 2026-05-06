@@ -10,6 +10,14 @@ export interface GameOptions {
   defeatCondition: DefeatCondition;
 }
 
+export interface MoveRecord {
+  pieceId: string;
+  kingdom: Kingdom;
+  from: PointId;
+  target: PointId;
+  capturedPieceId: string | null;
+}
+
 export interface GameState {
   pieces: Piece[];
   selectedPieceId: string | null;
@@ -20,6 +28,7 @@ export interface GameState {
   lastMoveMessage: string | null;
   defeatedKingdoms: Kingdom[];
   options: GameOptions;
+  moveHistory?: MoveRecord[];
 }
 
 export function createInitialGameState(
@@ -35,6 +44,7 @@ export function createInitialGameState(
     lastMoveMessage: null,
     defeatedKingdoms: [],
     options,
+    moveHistory: [],
   };
 }
 

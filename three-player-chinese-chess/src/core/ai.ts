@@ -16,6 +16,12 @@ export interface AiMoveOptions {
   random?: () => number;
   explorationRate?: number;
   explorationTop?: number;
+  explorationSlack?: number;
+  explorationTemperature?: number;
+  openingSearchDepth?: number;
+  openingRootBeam?: number;
+  openingResponseBeam?: number;
+  openingThirdPlayerBeam?: number;
 }
 
 const winScore = 1_000_000;
@@ -38,23 +44,28 @@ export function chooseAiMove(
     return urgentKingDefense;
   }
 
-  const generalCapture = actions.find((action) => capturedPieceAt(state, action.pieceId, action.target)?.type === "general");
+  const generalCapture = actions.find((action) => {
+    const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+    return capturedPiece?.type === "general" && !isNeutralBlocker(capturedPiece);
+  });
 
   if (generalCapture) {
     return generalCapture;
   }
 
-  const rootActions = actions.slice(0, profile.rootBeam);
+  const depth = searchDepthForState(state, profile, options);
+  const rootActions = actions.slice(0, rootBeamForState(state, profile, options, depth));
   let bestAction = rootActions[0];
   let bestScore = Number.NEGATIVE_INFINITY;
   const scoredActions: Array<{ action: AiMove; score: number }> = [];
 
-  const depth = isOpeningPhase(state) ? 0 : profile.searchDepth;
+  const searchProfile = searchProfileForState(state, profile, options, depth);
 
   for (const action of rootActions) {
-    const nextState = applyMove(state, action.pieceId, action.target);
+    const nextState = applySearchMove(state, action.pieceId, action.target);
     const score =
-      (depth > 0 ? evaluateAfterResponses(nextState, kingdom, depth, profile) : evaluateState(nextState, kingdom, profile)) +
+      (depth > 0 ? evaluateAfterResponses(nextState, kingdom, depth, searchProfile) : evaluateState(nextState, kingdom, searchProfile)) +
       cheapActionScore(state, action, kingdom, profile) * profile.scoring.rootActionWeight;
 
     scoredActions.push({ action, score });
@@ -65,20 +76,78 @@ export function chooseAiMove(
     }
   }
 
-  if (options.random && (options.explorationRate ?? 0) > 0 && options.random() < (options.explorationRate ?? 0)) {
-    const tolerance = Math.max(180, Math.abs(bestScore) * 0.035);
-    const topCount = Math.max(1, options.explorationTop ?? 3);
-    const candidates = scoredActions
-      .filter((item) => item.score >= bestScore - tolerance)
-      .sort((left, right) => right.score - left.score || compareAction(left.action, right.action))
-      .slice(0, topCount);
+  const exploratoryAction = pickExploratoryAction(scoredActions, bestScore, options);
 
-    if (candidates.length > 1) {
-      return candidates[Math.floor(options.random() * candidates.length)].action;
-    }
+  if (exploratoryAction) {
+    return exploratoryAction;
   }
 
   return bestAction;
+}
+
+function searchDepthForState(state: GameState, profile: AiProfile, options: AiMoveOptions): number {
+  if (!isOpeningPhase(state)) {
+    return profile.searchDepth;
+  }
+
+  return Math.max(0, Math.min(profile.searchDepth, options.openingSearchDepth ?? 1));
+}
+
+function rootBeamForState(state: GameState, profile: AiProfile, options: AiMoveOptions, depth: number): number {
+  if (!isOpeningPhase(state) || depth <= 0) {
+    return profile.rootBeam;
+  }
+
+  return Math.min(profile.rootBeam, options.openingRootBeam ?? 5 + Math.max(0, depth - 1) * 4);
+}
+
+function searchProfileForState(state: GameState, profile: AiProfile, options: AiMoveOptions, depth: number): AiProfile {
+  if (!isOpeningPhase(state) || depth <= 0) {
+    return profile;
+  }
+
+  return {
+    ...profile,
+    responseBeam: Math.min(profile.responseBeam, options.openingResponseBeam ?? Math.max(2, Math.min(4, depth + 1))),
+    thirdPlayerBeam: Math.min(profile.thirdPlayerBeam, options.openingThirdPlayerBeam ?? Math.max(1, Math.min(3, depth))),
+  };
+}
+
+function pickExploratoryAction(
+  scoredActions: Array<{ action: AiMove; score: number }>,
+  bestScore: number,
+  options: AiMoveOptions,
+): AiMove | null {
+  if (!options.random || (options.explorationRate ?? 0) <= 0 || options.random() >= (options.explorationRate ?? 0)) {
+    return null;
+  }
+
+  const random = options.random;
+  const slack = options.explorationSlack ?? Math.max(420, Math.abs(bestScore) * 0.06);
+  const topCount = Math.max(1, options.explorationTop ?? 3);
+  const candidates = scoredActions
+    .filter((item) => item.score >= bestScore - slack)
+    .sort((left, right) => right.score - left.score || compareAction(left.action, right.action))
+    .slice(0, topCount);
+
+  if (candidates.length <= 1) {
+    return null;
+  }
+
+  const temperature = Math.max(1, options.explorationTemperature ?? 480);
+  const weights = candidates.map((item) => Math.exp((item.score - bestScore) / temperature));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  let roll = random() * totalWeight;
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    roll -= weights[index];
+
+    if (roll <= 0) {
+      return candidates[index].action;
+    }
+  }
+
+  return candidates[candidates.length - 1].action;
 }
 
 export function getAiActions(state: GameState, kingdom: Kingdom, profile: AiProfile = defaultAiProfile): AiMove[] {
@@ -110,7 +179,7 @@ function search(state: GameState, aiKingdom: Kingdom, depth: number, alpha: numb
     for (const action of actions) {
       value = Math.max(
         value,
-        search(applyMove(state, action.pieceId, action.target), aiKingdom, depth - 1, alpha, beta, profile),
+        search(applySearchMove(state, action.pieceId, action.target), aiKingdom, depth - 1, alpha, beta, profile),
       );
       alpha = Math.max(alpha, value);
 
@@ -127,7 +196,7 @@ function search(state: GameState, aiKingdom: Kingdom, depth: number, alpha: numb
   for (const action of actions) {
     value = Math.min(
       value,
-      search(applyMove(state, action.pieceId, action.target), aiKingdom, depth - 1, alpha, beta, profile),
+      search(applySearchMove(state, action.pieceId, action.target), aiKingdom, depth - 1, alpha, beta, profile),
     );
     beta = Math.min(beta, value);
 
@@ -146,7 +215,9 @@ function getCandidateActions(state: GameState, kingdom: Kingdom, profile: AiProf
     return scoreDiff || compareAction(left, right);
   });
   const highPriorityActions = actions.filter((action) => {
-    return capturedPieceAt(state, action.pieceId, action.target)?.type === "general" || isKingDefenseCapture(state, action, kingdom);
+    const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+    return (capturedPiece?.type === "general" && !isNeutralBlocker(capturedPiece)) || isKingDefenseCapture(state, action, kingdom);
   });
   const scanActions = uniqueActions([...highPriorityActions, ...actions.slice(0, profile.safetyScanLimit)]);
   const safeActions = scanActions.filter((action) => doesNotLeaveKingdomInCheck(state, action, kingdom));
@@ -171,8 +242,17 @@ function getAllActions(state: GameState, kingdom: Kingdom): AiMove[] {
     });
 }
 
+function applySearchMove(state: GameState, pieceId: string, target: PointId): GameState {
+  const nextState = applyMove(state, pieceId, target);
+
+  return {
+    ...nextState,
+    moveHistory: state.moveHistory,
+  };
+}
+
 function doesNotLeaveKingdomInCheck(state: GameState, action: AiMove, kingdom: Kingdom): boolean {
-  const nextState = applyMove(state, action.pieceId, action.target);
+  const nextState = applySearchMove(state, action.pieceId, action.target);
 
   return !getCheckedKingdoms(nextState).includes(kingdom);
 }
@@ -187,6 +267,12 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, pr
   }
 
   if (capturedPiece) {
+    if (isNeutralBlocker(capturedPiece)) {
+      score -= neutralBlockerCapturePenalty(movingPiece, profile);
+      score += targetPressureScore(state, action.target, kingdom, profile);
+      return score;
+    }
+
     const capturedValue = pieceValue(capturedPiece, profile);
 
     if (movingPiece.type === "general") {
@@ -221,6 +307,7 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, pr
 
   score += developmentScore(state, action, movingPiece, profile);
   score += targetPressureScore(state, action.target, kingdom, profile);
+  score -= repetitiveQuietMovePenalty(state, action, movingPiece, capturedPiece);
 
   return score;
 }
@@ -238,7 +325,7 @@ function evaluateAfterResponses(state: GameState, aiKingdom: Kingdom, depth: num
   }
 
   for (const response of responseActions) {
-    const responseState = applyMove(state, response.pieceId, response.target);
+    const responseState = applySearchMove(state, response.pieceId, response.target);
     const responseScore =
       responseState.currentKingdom !== aiKingdom && !responseState.winner
         ? evaluateThirdPlayerResponse(responseState, aiKingdom, depth - 1, profile)
@@ -263,7 +350,7 @@ function evaluateThirdPlayerResponse(state: GameState, aiKingdom: Kingdom, depth
     worstScore = Math.min(
       worstScore,
       search(
-        applyMove(state, action.pieceId, action.target),
+        applySearchMove(state, action.pieceId, action.target),
         aiKingdom,
         Math.max(0, depth - 1),
         Number.NEGATIVE_INFINITY,
@@ -400,6 +487,51 @@ function developmentScore(state: GameState, action: AiMove, piece: Piece, profil
   return 0;
 }
 
+function repetitiveQuietMovePenalty(state: GameState, action: AiMove, movingPiece: Piece, capturedPiece: Piece | null): number {
+  if (capturedPiece) {
+    return 0;
+  }
+
+  const ownHistory = (state.moveHistory ?? []).filter((move) => move.kingdom === movingPiece.controller);
+
+  if (!ownHistory.length) {
+    return 0;
+  }
+
+  const recentOwnMoves = ownHistory.slice(-8);
+  const recentPieceMoves = recentOwnMoves.filter((move) => move.pieceId === action.pieceId);
+  const lastPieceMove = recentPieceMoves.at(-1);
+  let penalty = 0;
+
+  if (lastPieceMove?.from === action.target && lastPieceMove.target === action.from) {
+    penalty += 2_400;
+  }
+
+  if (recentPieceMoves.some((move) => move.from === action.target && move.target === action.from)) {
+    penalty += 800;
+  }
+
+  if (recentPieceMoves.some((move) => move.from === action.target || move.target === action.target)) {
+    penalty += 360;
+  }
+
+  const samePieceTempo = ownHistory.slice(-4).filter((move) => move.pieceId === action.pieceId).length;
+
+  if (samePieceTempo >= 2) {
+    penalty += samePieceTempo * 260;
+  }
+
+  if (movingPiece.type === "advisor" || movingPiece.type === "elephant") {
+    penalty += isOwnKingdomPoint(movingPiece.kingdom, action.target) ? 80 : 420;
+  }
+
+  if (movingPiece.type === "general") {
+    penalty += 620;
+  }
+
+  return penalty;
+}
+
 function exchangeRiskPenalty(
   state: GameState,
   action: AiMove,
@@ -414,7 +546,7 @@ function exchangeRiskPenalty(
 
   const movingValue = pieceValue(movingPiece, profile);
   const capturedValue = pieceValue(capturedPiece, profile);
-  const nextState = applyMove(state, action.pieceId, action.target);
+  const nextState = applySearchMove(state, action.pieceId, action.target);
   const exposed = isPointControlledByOpponent(nextState, action.target, kingdom);
 
   if (!exposed) {
@@ -482,7 +614,7 @@ function openingRaidPenalty(
 
 function isPointControlledByOpponent(state: GameState, point: PointId, kingdom: Kingdom): boolean {
   return state.pieces.some((piece) => {
-    return piece.controller !== kingdom && piece.blocksMovement && getLegalMoves(state, piece).includes(point);
+    return piece.controller !== kingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getLegalMoves(state, piece).includes(point);
   });
 }
 
@@ -512,7 +644,7 @@ function isKingDefenseCapture(state: GameState, action: AiMove, kingdom: Kingdom
   const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
   const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
 
-  if (!movingPiece || movingPiece.type !== "general" || !capturedPiece) {
+  if (!movingPiece || movingPiece.type !== "general" || !capturedPiece || isNeutralBlocker(capturedPiece)) {
     return false;
   }
 
@@ -553,8 +685,8 @@ function kingSafetyScore(state: GameState, kingdom: Kingdom, profile: AiProfile)
   }
 
   let score = 0;
-  const ownPieces = state.pieces.filter((piece) => piece.controller === kingdom && piece.blocksMovement);
-  const opponentPieces = state.pieces.filter((piece) => piece.controller !== kingdom && piece.blocksMovement);
+  const ownPieces = state.pieces.filter((piece) => piece.controller === kingdom && piece.blocksMovement && !isNeutralBlocker(piece));
+  const opponentPieces = state.pieces.filter((piece) => piece.controller !== kingdom && piece.blocksMovement && !isNeutralBlocker(piece));
   const palaceRows = kingdomRows[kingdom] as readonly string[];
   const palaceGuardRows = palaceRows.slice(2);
 
@@ -641,6 +773,12 @@ function soldierAdvance(piece: Piece): number {
 
 function isNeutralBlocker(piece: Piece): boolean {
   return piece.defeated && piece.controller === piece.kingdom;
+}
+
+function neutralBlockerCapturePenalty(movingPiece: Piece, profile: AiProfile): number {
+  const movingValue = pieceValue(movingPiece, profile);
+
+  return 260 + movingValue * 0.35;
 }
 
 function uniqueActions(actions: AiMove[]): AiMove[] {

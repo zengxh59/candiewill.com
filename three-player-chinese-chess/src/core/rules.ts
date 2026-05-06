@@ -5,6 +5,7 @@ import {
   turnOrder,
   updatePiecePosition,
   type GameState,
+  type MoveRecord,
 } from "./game-state";
 import { getCheckedKingdoms, getLegalMoves } from "./moves";
 
@@ -30,6 +31,13 @@ export function applyMove(state: GameState, pieceId: string, target: PointId): G
   }
 
   const capturedPiece = capturedPieceAt(state, pieceId, target);
+  const moveRecord: MoveRecord = {
+    pieceId,
+    kingdom: movingPiece.controller,
+    from: movingPiece.position,
+    target,
+    capturedPieceId: capturedPiece?.id ?? null,
+  };
   const movedState = updatePiecePosition(state, pieceId, target);
   const captureDefeatedKingdom = capturedPiece?.type === "general" ? capturedPiece.kingdom : null;
   const captureResolved = resolveDefeatedKingdom(movedState, state.defeatedKingdoms, captureDefeatedKingdom, movingPiece.controller);
@@ -55,6 +63,7 @@ export function applyMove(state: GameState, pieceId: string, target: PointId): G
       : capturedPiece
       ? `${kingdomName(movingPiece.controller)}吃掉${kingdomName(capturedPiece.kingdom)}${capturedPiece.label}`
       : null,
+    moveHistory: [...(state.moveHistory ?? []), moveRecord].slice(-24),
   };
 
   return {
