@@ -9,6 +9,7 @@ import {
   pieceAt,
   type DefeatedPieceMode,
   type GameOptions,
+  type GameState,
 } from "../core/game-state";
 import { getCheckedKingdoms, getLegalMoves } from "../core/moves";
 import type { Piece } from "../core/pieces";
@@ -21,12 +22,13 @@ const status = document.querySelector<HTMLDivElement>("#status");
 const startScreen = document.querySelector<HTMLElement>("#start-screen");
 const startButton = document.querySelector<HTMLButtonElement>("#start-game");
 const settingsButton = document.querySelector<HTMLButtonElement>("#show-settings");
+const undoButton = document.querySelector<HTMLButtonElement>("#undo-move");
 const aiStartLearningButton = document.querySelector<HTMLButtonElement>("#ai-start-learning");
 const aiDownloadLearningButton = document.querySelector<HTMLButtonElement>("#ai-download-learning");
 const aiLearningRoundsInput = document.querySelector<HTMLInputElement>("#ai-learning-rounds");
 const aiLearningOutput = document.querySelector<HTMLOutputElement>("#ai-learning-output");
 
-if (!canvas || !status || !startScreen || !startButton || !settingsButton || !aiStartLearningButton || !aiDownloadLearningButton || !aiLearningRoundsInput || !aiLearningOutput) {
+if (!canvas || !status || !startScreen || !startButton || !settingsButton || !undoButton || !aiStartLearningButton || !aiDownloadLearningButton || !aiLearningRoundsInput || !aiLearningOutput) {
   throw new Error("Board canvas was not found.");
 }
 
@@ -96,6 +98,7 @@ let thinkingFrame: number | null = null;
 let currentAnimation: BoardAnimation | null = null;
 let activeAiProfile = readStoredAiProfile();
 let learningSession: LearningSession | null = null;
+let undoSnapshot: GameState | null = null;
 let state = createInitialGameState(readStartSettings().options);
 state = {
   ...state,
@@ -103,6 +106,7 @@ state = {
 };
 
 function render(): void {
+  undoButton!.disabled = !canUndoLastPlayerMove();
   drawBoard(canvas!, defaultGeometry, state, {
     currentKingdom: state.currentKingdom,
     thinkingKingdom: isAiThinking ? state.currentKingdom : null,
@@ -204,6 +208,7 @@ startButton.addEventListener("click", () => {
   activeAiProfile = profileForIntensity(intensityForDifficulty(settings.aiDifficulty));
   isAnimating = false;
   currentAnimation = null;
+  undoSnapshot = null;
   state = createInitialGameState(settings.options);
   state = {
     ...state,
@@ -221,8 +226,13 @@ settingsButton.addEventListener("click", () => {
   isAiThinking = false;
   isAnimating = false;
   currentAnimation = null;
+  undoSnapshot = null;
   startScreen.classList.remove("is-hidden");
   render();
+});
+
+undoButton.addEventListener("click", () => {
+  undoLastPlayerMove();
 });
 
 aiStartLearningButton.addEventListener("click", () => {
@@ -323,6 +333,10 @@ async function commitMove(pieceId: string, target: PointId, kingdom: Kingdom, ac
     return;
   }
 
+  if (actor === "玩家" && currentGameMode === "ai" && kingdom === humanKingdom) {
+    undoSnapshot = cloneGameState(state);
+  }
+
   const capturedPiece = capturedPieceAt(state, pieceId, target);
   const move = {
     pieceId,
@@ -336,6 +350,51 @@ async function commitMove(pieceId: string, target: PointId, kingdom: Kingdom, ac
   currentAnimation = null;
   isAnimating = false;
   render();
+}
+
+function undoLastPlayerMove(): void {
+  if (!canUndoLastPlayerMove() || !undoSnapshot) {
+    return;
+  }
+
+  clearAiTimer();
+  stopThinkingLoop();
+  isAiThinking = false;
+  isAnimating = false;
+  currentAnimation = null;
+  state = {
+    ...cloneGameState(undoSnapshot),
+    selectedPieceId: null,
+    legalMoves: [],
+    winner: null,
+    lastMoveMessage: `已悔棋，轮到${kingdomName(humanKingdom)}行棋`,
+  };
+  undoSnapshot = null;
+  render();
+}
+
+function canUndoLastPlayerMove(): boolean {
+  return (
+    currentGameMode === "ai" &&
+    undoSnapshot !== null &&
+    !state.winner &&
+    !isAnimating &&
+    !isAiThinking &&
+    state.currentKingdom === humanKingdom &&
+    startScreen!.classList.contains("is-hidden")
+  );
+}
+
+function cloneGameState(source: GameState): GameState {
+  return {
+    ...source,
+    pieces: source.pieces.map((piece) => ({ ...piece })),
+    legalMoves: [...source.legalMoves],
+    checkedKingdoms: [...source.checkedKingdoms],
+    defeatedKingdoms: [...source.defeatedKingdoms],
+    options: { ...source.options },
+    moveHistory: source.moveHistory?.map((move) => ({ ...move })) ?? [],
+  };
 }
 
 function playMoveAnimation(movingPiece: Piece, capturedPiece: Piece | null, target: PointId): Promise<void> {

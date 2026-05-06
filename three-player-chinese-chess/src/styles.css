@@ -120,7 +120,8 @@ body {
 }
 
 .primary-action,
-.settings-button {
+.settings-button,
+.undo-button {
   border: 0;
   border-radius: 8px;
   background: #111;
@@ -304,10 +305,10 @@ body {
   width: min(calc(100vw - 16px), 1000px, calc(105.77dvh - 80px));
 }
 
-.settings-button {
+.settings-button,
+.undo-button {
   position: absolute;
   top: clamp(4px, 1vw, 10px);
-  right: clamp(4px, 1vw, 10px);
   z-index: 2;
   min-width: 56px;
   min-height: 32px;
@@ -316,6 +317,21 @@ body {
   background: #f5f5f5;
   color: #111;
   border: 1px solid #d8d8d8;
+}
+
+.settings-button {
+  right: clamp(4px, 1vw, 10px);
+}
+
+.undo-button {
+  left: clamp(4px, 1vw, 10px);
+}
+
+.undo-button:disabled {
+  color: #111;
+  background: #f5f5f5;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .status {
