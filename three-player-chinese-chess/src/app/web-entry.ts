@@ -660,6 +660,8 @@ async function playOnlineMoveAnimation(previousState: GameState, nextState: Game
     return false;
   }
 
+  lastAnimatedOnlineMoveKey = moveKey;
+
   const movingPiece = previousState.pieces.find((piece) => piece.id === move.pieceId);
 
   if (!movingPiece || movingPiece.position !== move.from) {
@@ -679,7 +681,6 @@ async function playOnlineMoveAnimation(previousState: GameState, nextState: Game
   await playMoveAnimation(movingPiece, capturedPiece, move.target);
   currentAnimation = null;
   isAnimating = false;
-  lastAnimatedOnlineMoveKey = moveKey;
 
   return true;
 }

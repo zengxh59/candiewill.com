@@ -124,7 +124,7 @@ function handleSocketMessage(socket: WebSocket, raw: string): void {
         }
 
         send(socket, { type: "moveAccepted", clientMoveId: message.clientMoveId, snapshot: result.snapshot });
-        broadcastRoom(result.room);
+        broadcastRoom(result.room, message.playerId);
         return;
       }
     }
@@ -133,9 +133,14 @@ function handleSocketMessage(socket: WebSocket, raw: string): void {
   }
 }
 
-function broadcastRoom(room: OnlineRoom): void {
+function broadcastRoom(room: OnlineRoom, excludePlayerId?: string): void {
   for (const [socket, session] of sockets) {
-    if (session.roomCode !== room.roomCode || !session.playerId || socket.readyState !== WebSocket.OPEN) {
+    if (
+      session.roomCode !== room.roomCode ||
+      !session.playerId ||
+      socket.readyState !== WebSocket.OPEN ||
+      session.playerId === excludePlayerId
+    ) {
       continue;
     }
 
