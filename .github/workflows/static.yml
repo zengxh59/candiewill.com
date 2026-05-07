@@ -28,6 +28,8 @@ jobs:
         with:
           node-version: 20
       - name: Install and build three-player-chinese-chess
+        env:
+          VITE_ONLINE_WS_URL: wss://candiewill-com.onrender.com/ws
         run: |
           cd three-player-chinese-chess
           npm ci
