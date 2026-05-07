@@ -134,6 +134,7 @@ let activeAiProfile = readStoredAiProfile();
 let learningSession: LearningSession | null = null;
 let undoSnapshot: GameState | null = null;
 let onlineSocket: WebSocket | null = null;
+let onlineHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let onlineSnapshot: OnlineRoomSnapshot | null = null;
 let onlineConnectionState: "idle" | "connecting" | "connected" | "disconnected" = "idle";
 let onlinePendingMoveId: string | null = null;
@@ -772,6 +773,7 @@ function connectOnlineSocket(): void {
 
   onlineSocket.addEventListener("open", () => {
     onlineConnectionState = "connected";
+    onlineHeartbeatTimer = setInterval(() => sendOnlineMessage({ type: "ping" }), 30_000);
     syncOnlineControls();
   });
 
@@ -780,6 +782,8 @@ function connectOnlineSocket(): void {
   });
 
   onlineSocket.addEventListener("close", () => {
+    clearInterval(onlineHeartbeatTimer!);
+    onlineHeartbeatTimer = null;
     onlineConnectionState = "disconnected";
     onlinePendingMoveId = null;
     syncOnlineControls();
@@ -985,6 +989,8 @@ function leaveOnlineRoom(): void {
 }
 
 function resetOnlineSession(): void {
+  clearInterval(onlineHeartbeatTimer!);
+  onlineHeartbeatTimer = null;
   onlineSocket = null;
   onlineSnapshot = null;
   onlinePendingMoveId = null;
