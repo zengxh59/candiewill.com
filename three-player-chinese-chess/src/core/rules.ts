@@ -91,6 +91,58 @@ export function getCheckmatedKingdoms(state: GameState, defeatedKingdoms = state
   });
 }
 
+export function resignKingdom(state: GameState, kingdom: Kingdom): GameState {
+  if (state.winner || state.defeatedKingdoms.includes(kingdom)) {
+    return state;
+  }
+
+  const defeatedKingdoms = [...state.defeatedKingdoms, kingdom];
+  const activeKingdoms = turnOrder.filter((activeKingdom) => !defeatedKingdoms.includes(activeKingdom));
+  const winner = activeKingdoms.length === 1 ? activeKingdoms[0] : null;
+  const defeatedState: GameState = {
+    ...applyResignedPieceMode(state, kingdom),
+    selectedPieceId: null,
+    legalMoves: [],
+    defeatedKingdoms,
+    winner,
+    currentKingdom: winner
+      ? state.currentKingdom
+      : kingdom === state.currentKingdom
+      ? nextActiveKingdom(state.currentKingdom, defeatedKingdoms)
+      : state.currentKingdom,
+    lastMoveMessage: `${kingdomName(kingdom)}认输出局`,
+  };
+
+  return {
+    ...defeatedState,
+    checkedKingdoms: winner ? [] : getCheckedKingdoms(defeatedState),
+  };
+}
+
+function applyResignedPieceMode(state: GameState, kingdom: Kingdom): GameState {
+  if (state.options.defeatedPieceMode === "remove") {
+    return {
+      ...state,
+      pieces: state.pieces.filter((piece) => piece.kingdom !== kingdom),
+    };
+  }
+
+  return {
+    ...state,
+    pieces: state.pieces.map((piece) => {
+      if (piece.kingdom !== kingdom) {
+        return piece;
+      }
+
+      return {
+        ...piece,
+        defeated: true,
+        blocksMovement: true,
+      };
+    }),
+  };
+}
+
 function resolveDefeatedKingdom(
   state: GameState,
   defeatedKingdoms: readonly Kingdom[],

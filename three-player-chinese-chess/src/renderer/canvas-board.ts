@@ -30,6 +30,7 @@ export interface BoardUiState {
   thinkingPhase: number;
   humanKingdom: Kingdom;
   mode: "ai" | "online" | "ai-learning";
+  viewRotation?: number;
 }
 
 export interface BoardAnimation {
@@ -55,6 +56,13 @@ export function drawBoard(
 
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+
+  if (uiState?.viewRotation) {
+    ctx.translate(geometry.center.x, geometry.center.y);
+    ctx.rotate((uiState.viewRotation * Math.PI) / 180);
+    ctx.translate(-geometry.center.x, -geometry.center.y);
+  }
 
   for (const board of boardRenderGroups) {
     drawBoardLines(ctx, board.rotation, geometry);
@@ -77,6 +85,8 @@ export function drawBoard(
     drawCaptureHighlights(ctx, state, geometry);
     drawAnimation(ctx, animation);
   }
+
+  ctx.restore();
 }
 
 function drawLine(ctx: CanvasRenderingContext2D, from: ScreenPoint, to: ScreenPoint): void {

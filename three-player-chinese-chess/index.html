@@ -18,11 +18,15 @@
               <small>你执魏国，蜀、吴由 AI 行棋</small>
             </span>
           </label>
-          <label class="rule-option mode-option is-disabled">
-            <input type="radio" name="game-mode" value="online" disabled />
+          <label class="rule-option mode-option">
+            <input type="radio" name="game-mode" value="online" />
             <span>
               <strong>联机在线</strong>
-              <small>功能预留，后续开放</small>
+              <small>输入房间码加入，留空创建新局</small>
+              <span class="online-room-field">
+                <input id="online-room-code" type="text" maxlength="5" inputmode="numeric" pattern="[0-9]{5}" autocomplete="off" spellcheck="false" placeholder="5位房间码" />
+                <output id="online-room-output" class="online-room-output"></output>
+              </span>
             </span>
           </label>
         </fieldset>
@@ -130,6 +134,16 @@
       <div id="status" class="status" aria-live="polite"></div>
       <canvas id="board" width="1100" height="1040" aria-label="三人中国象棋棋盘线框"></canvas>
     </main>
+    <div id="confirm-dialog" class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message" hidden>
+      <div class="confirm-card">
+        <h2 id="confirm-title">确认退出</h2>
+        <p id="confirm-message">确定要退出吗？</p>
+        <div class="confirm-actions">
+          <button id="confirm-cancel" class="confirm-cancel" type="button">取消</button>
+          <button id="confirm-ok" class="confirm-ok" type="button">确认退出</button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/app/web-entry.ts"></script>
   </body>
 </html>

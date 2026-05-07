@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { chooseAiMove } from "./ai";
 import { aiScenarios } from "./ai-scenarios";
+import { aiStyleForKingdom } from "./ai-profile";
 import { createInitialGameState, type GameState } from "./game-state";
 import { getCheckedKingdoms } from "./moves";
 import type { Piece } from "./pieces";
@@ -45,8 +46,8 @@ describe("AI player", () => {
       [
         piece("wu-general", "general", "吴", "J5", "wu"),
         piece("wei-chariot", "chariot", "车", "F4", "wei"),
-        piece("wei-general", "general", "魏", "E5", "wei"),
-        piece("shu-general", "general", "蜀", "O5", "shu"),
+        piece("wei-general", "general", "魏", "E1", "wei"),
+        piece("shu-general", "general", "蜀", "O1", "shu"),
       ],
       "wu",
     );
@@ -121,6 +122,27 @@ describe("AI player", () => {
 
     expect(exploratory).not.toBeNull();
     expect(exploratory).not.toEqual(greedy);
+  });
+
+  it("keeps seeded exploration deterministic", () => {
+    const state = applyMove(createInitialGameState(), "wei-soldier-5", "A5");
+    const options = {
+      seed: 1234,
+      explorationRate: 1,
+      explorationTop: 8,
+      explorationSlack: Number.POSITIVE_INFINITY,
+      explorationTemperature: 1_000_000,
+      openingSearchDepth: 0,
+      timeBudgetMs: 1_000,
+    };
+
+    expect(chooseAiMove(state, "shu", undefined, options)).toEqual(chooseAiMove(state, "shu", undefined, options));
+  });
+
+  it("defines distinct kingdom style profiles", () => {
+    expect(aiStyleForKingdom("wei").attackMultiplier).toBeGreaterThan(aiStyleForKingdom("shu").attackMultiplier);
+    expect(aiStyleForKingdom("shu").safetyMultiplier).toBeGreaterThan(aiStyleForKingdom("wei").safetyMultiplier);
+    expect(aiStyleForKingdom("wu").mobilityMultiplier).toBeGreaterThan(aiStyleForKingdom("shu").mobilityMultiplier);
   });
 
   it("avoids immediately reversing a quiet move when other useful moves exist", () => {

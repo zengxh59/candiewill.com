@@ -3,7 +3,7 @@ import type { GameState } from "./game-state";
 import { createInitialGameState } from "./game-state";
 import { getCheckedKingdoms, getLegalMoves } from "./moves";
 import type { Piece } from "./pieces";
-import { applyMove } from "./rules";
+import { applyMove, resignKingdom } from "./rules";
 
 describe("turns, checks, and wins", () => {
   it("moves in counterclockwise order: Wei -> Shu -> Wu", () => {
@@ -178,6 +178,36 @@ describe("turns, checks, and wins", () => {
 
     expect(next.defeatedKingdoms).toEqual([]);
     expect(next.checkedKingdoms).toEqual(["wu"]);
+  });
+
+  it("defeats the resigning kingdom and advances its turn", () => {
+    const state = stateWith([
+      piece("wei-general", "general", "魏", "E5", "wei"),
+      piece("shu-general", "general", "蜀", "O4", "shu"),
+      piece("wu-general", "general", "吴", "J4", "wu"),
+    ]);
+    const next = resignKingdom(state, "wei");
+
+    expect(next.defeatedKingdoms).toEqual(["wei"]);
+    expect(next.currentKingdom).toBe("shu");
+    expect(next.winner).toBeNull();
+    expect(next.lastMoveMessage).toBe("魏认输出局");
+  });
+
+  it("declares the last active kingdom as winner after resignation", () => {
+    const state = {
+      ...stateWith([
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+        piece("wu-general", "general", "吴", "J4", "wu"),
+      ]),
+      defeatedKingdoms: ["wei" as const],
+      currentKingdom: "shu" as const,
+    };
+    const next = resignKingdom(state, "shu");
+
+    expect(next.defeatedKingdoms).toEqual(["wei", "shu"]);
+    expect(next.winner).toBe("wu");
   });
 });
 

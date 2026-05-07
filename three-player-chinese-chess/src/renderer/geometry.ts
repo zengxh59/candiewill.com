@@ -84,6 +84,15 @@ export function rotate(point: ScreenPoint, angle: number): ScreenPoint {
   };
 }
 
+export function rotateAround(point: ScreenPoint, center: ScreenPoint, angle: number): ScreenPoint {
+  const rotated = rotate({ x: point.x - center.x, y: point.y - center.y }, angle);
+
+  return {
+    x: center.x + rotated.x,
+    y: center.y + rotated.y,
+  };
+}
+
 export function boardPoint(xIndex: number, yIndex: number, angle: number, geometry = defaultGeometry): ScreenPoint {
   const local = localPoint(xIndex, yIndex, geometry);
   const shifted = { x: local.x, y: local.y + geometry.gap };
@@ -154,10 +163,11 @@ export function mixPoint(a: ScreenPoint, b: ScreenPoint, ratio: number): ScreenP
 export function hitTestBoardPoint(
   x: number,
   y: number,
-  options: { radius?: number; geometry?: BoardGeometry } = {},
+  options: { radius?: number; geometry?: BoardGeometry; viewRotation?: number } = {},
 ): PointId | null {
   const radius = options.radius ?? 22;
   const geometry = options.geometry ?? defaultGeometry;
+  const viewPoint = rotateAround({ x, y }, geometry.center, -(options.viewRotation ?? 0));
   let nearestId: PointId | null = null;
   let nearestDistance = Infinity;
 
@@ -165,7 +175,7 @@ export function hitTestBoardPoint(
     group.yLabels.forEach((row, yIndex) => {
       for (let col = 1; col <= 9; col += 1) {
         const position = boardPoint(col - 1, yIndex, group.rotation, geometry);
-        const distance = Math.hypot(position.x - x, position.y - y);
+        const distance = Math.hypot(position.x - viewPoint.x, position.y - viewPoint.y);
         const id = `${row}${col}` as PointId;
 
         if (distance <= radius && distance < nearestDistance) {

@@ -25,6 +25,7 @@ while (cycles === 0 || cycleIndex < cycles) {
   const baseline = runAiBenchmark(currentProfile);
   const result = tuneAiProfile(currentProfile, {
     iterations,
+    populationSize: 3,
     seed: Math.floor(startedAt.getTime() % 4294967296),
   });
   const gain = result.report.score - baseline.score;
@@ -63,6 +64,7 @@ while (cycles === 0 || cycleIndex < cycles) {
     baseline,
     candidate: result.report,
     profile: result.profile,
+    rejected: result.rejected,
   };
 
   await writeLearningReport(report);

@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc && vite build",
+    "dev:online": "concurrently \"npm run dev\" \"npm run start:server:dev\"",
+    "build": "tsc && vite build && npm run build:server",
+    "build:server": "tsc -p tsconfig.server.json && esbuild server/online-server.ts --bundle --platform=node --format=cjs --outfile=dist/server/online-server.cjs",
+    "start": "node dist/server/online-server.cjs",
+    "start:server:dev": "vite-node server/online-server.ts",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "ai:benchmark": "AI_BENCHMARK_ENTRY=1 vite-node scripts/ai-benchmark.ts",
@@ -18,5 +22,10 @@
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vitest": "^3.1.2"
+  },
+  "dependencies": {
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
+    "ws": "^8.20.0"
   }
 }
