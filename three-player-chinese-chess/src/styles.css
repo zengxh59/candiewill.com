@@ -546,8 +546,9 @@ canvas {
   position: fixed;
   bottom: 4px;
   right: 8px;
+  z-index: 100;
   font-size: 11px;
-  color: #999;
+  color: #bbb;
   pointer-events: none;
   user-select: none;
 }
