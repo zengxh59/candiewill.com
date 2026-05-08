@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { chooseAiMove } from "./ai";
 import { aiScenarios } from "./ai-scenarios";
 import { aiStyleForKingdom } from "./ai-profile";
-import { createInitialGameState, type GameState } from "./game-state";
+import { capturedPieceAt, createInitialGameState, type GameState } from "./game-state";
 import { getCheckedKingdoms } from "./moves";
 import type { Piece } from "./pieces";
 import { applyMove } from "./rules";
@@ -18,8 +18,29 @@ describe("AI player", () => {
         expect(move, scenario.title).toMatchObject(scenario.expected);
       }
 
+      if (scenario.expectedAny) {
+        expect(
+          scenario.expectedAny.some((expected) => move!.pieceId === expected.pieceId && move!.target === expected.target),
+          scenario.title,
+        ).toBe(true);
+      }
+
       if (scenario.avoid) {
         expect(move, scenario.title).not.toMatchObject(scenario.avoid);
+      }
+
+      if (scenario.avoidAny) {
+        for (const avoided of scenario.avoidAny) {
+          expect(move, scenario.title).not.toMatchObject(avoided);
+        }
+      }
+
+      if (scenario.mustCaptureIfProfitable) {
+        expect(capturedPieceAt(scenario.state, move!.pieceId, move!.target), scenario.title).not.toBeNull();
+      }
+
+      if (scenario.mustResolveCheck) {
+        expect(getCheckedKingdoms(applyMove(scenario.state, move!.pieceId, move!.target)), scenario.title).not.toContain(scenario.kingdom);
       }
     }
   });

@@ -11,10 +11,22 @@ export interface AiScenario {
     pieceId: string;
     target: PointId;
   };
+  expectedAny?: Array<{
+    pieceId: string;
+    target: PointId;
+  }>;
   avoid?: {
     pieceId: string;
     target: PointId;
   };
+  avoidAny?: Array<{
+    pieceId: string;
+    target: PointId;
+  }>;
+  mustCaptureIfProfitable?: boolean;
+  mustAddressThreatenedPiece?: boolean;
+  mustResolveCheck?: boolean;
+  distinctFromBaselineStyle?: boolean;
 }
 
 export const aiScenarios: AiScenario[] = [
@@ -42,7 +54,7 @@ export const aiScenarios: AiScenario[] = [
         piece("wu-general", "general", "吴", "J5", "wu"),
         piece("wei-chariot", "chariot", "车", "F4", "wei"),
         piece("wei-general", "general", "魏", "E5", "wei"),
-        piece("shu-general", "general", "蜀", "O5", "shu"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
       ],
       "wu",
     ),
@@ -96,15 +108,86 @@ export const aiScenarios: AiScenario[] = [
       "wu",
     ),
   },
+  {
+    id: "take-free-horse",
+    title: "有白吃马的机会时不应错过",
+    kingdom: "wu",
+    expected: { pieceId: "wu-chariot", target: "F6" },
+    mustCaptureIfProfitable: true,
+    state: stateWith(
+      [
+        piece("wu-chariot", "chariot", "车", "F5", "wu"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wei-horse", "horse", "马", "F6", "wei"),
+        piece("wei-general", "general", "魏", "E4", "wei"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ],
+      "wu",
+    ),
+  },
+  {
+    id: "cannon-takes-unprotected-horse",
+    title: "主公可安全吃掉近宫威胁时应主动吃",
+    kingdom: "wu",
+    expected: { pieceId: "wu-general", target: "J4" },
+    mustCaptureIfProfitable: true,
+    state: stateWith(
+      [
+        piece("wu-cannon", "cannon", "炮", "F1", "wu"),
+        piece("wu-screen", "soldier", "卒", "F2", "wu"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wei-horse", "horse", "马", "J4", "wei"),
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ],
+      "wu",
+    ),
+  },
+  {
+    id: "capture-attacker-on-major-piece",
+    title: "大子被攻击时优先反吃攻击子",
+    kingdom: "wu",
+    expected: { pieceId: "wu-chariot", target: "F6" },
+    mustAddressThreatenedPiece: true,
+    state: stateWith(
+      [
+        piece("wu-chariot", "chariot", "车", "F5", "wu"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wei-chariot", "chariot", "车", "F6", "wei"),
+        piece("wei-general", "general", "魏", "E4", "wei"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ],
+      "wu",
+    ),
+  },
+  {
+    id: "resolve-check-before-greedy-capture",
+    title: "被将军时先处理主公安全",
+    kingdom: "wu",
+    avoid: { pieceId: "wu-chariot", target: "F3" },
+    mustResolveCheck: true,
+    state: stateWith(
+      [
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wu-chariot", "chariot", "车", "F5", "wu"),
+        piece("wei-chariot", "chariot", "车", "F4", "wei"),
+        piece("wei-horse", "horse", "马", "F3", "wei"),
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+      "wu",
+      ["wu"],
+    ),
+  },
 ];
 
-function stateWith(pieces: Piece[], currentKingdom: GameState["currentKingdom"]): GameState {
+function stateWith(pieces: Piece[], currentKingdom: GameState["currentKingdom"], checkedKingdoms: GameState["checkedKingdoms"] = []): GameState {
   return {
     pieces,
     selectedPieceId: null,
     legalMoves: [],
     currentKingdom,
-    checkedKingdoms: [],
+    checkedKingdoms,
     winner: null,
     lastMoveMessage: null,
     defeatedKingdoms: [],

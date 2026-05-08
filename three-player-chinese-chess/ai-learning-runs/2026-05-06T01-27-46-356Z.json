@@ -1,0 +1,107 @@
+{
+  "cycle": 1,
+  "startedAt": "2026-05-06T01:27:46.356Z",
+  "finishedAt": "2026-05-06T01:27:53.018Z",
+  "iterations": 1,
+  "gain": 2,
+  "applied": false,
+  "verification": "skipped",
+  "baseline": {
+    "score": -173258,
+    "scenario": {
+      "passed": 4,
+      "total": 4,
+      "failures": [],
+      "averageMs": 3.6
+    },
+    "selfPlay": {
+      "games": 3,
+      "averagePlies": 28,
+      "earlyDefeats": 0,
+      "winners": {
+        "wei": 0,
+        "shu": 0,
+        "wu": 0,
+        "none": 3
+      },
+      "averageScore": -173775
+    }
+  },
+  "candidate": {
+    "score": -173256,
+    "scenario": {
+      "passed": 4,
+      "total": 4,
+      "failures": [],
+      "averageMs": 1.1
+    },
+    "selfPlay": {
+      "games": 3,
+      "averagePlies": 28,
+      "earlyDefeats": 0,
+      "winners": {
+        "wei": 0,
+        "shu": 0,
+        "wu": 0,
+        "none": 3
+      },
+      "averageScore": -173775
+    }
+  },
+  "profile": {
+    "searchDepth": 2,
+    "rootBeam": 12,
+    "responseBeam": 5,
+    "thirdPlayerBeam": 3,
+    "safetyScanLimit": 18,
+    "pieceValues": {
+      "general": 12000,
+      "chariot": 900,
+      "cannon": 400,
+      "horse": 400,
+      "elephant": 200,
+      "advisor": 200,
+      "soldier": 100
+    },
+    "scoring": {
+      "rootActionWeight": 0.35,
+      "generalCaptureBonus": 90000,
+      "capturedValueMultiplier": 3,
+      "tradeDeltaMultiplier": 5,
+      "generalQuietMovePenalty": 220,
+      "soldierAdvanceAction": 28,
+      "activePieceAction": 90,
+      "developmentMajor": 260,
+      "developmentCannon": 120,
+      "developmentSoldier": 80,
+      "badTradeMultiplier": 2.8,
+      "exposedTradeMultiplier": 1.05,
+      "openingRaidPenalty": 1350,
+      "kingDefensePalaceCapture": 22000,
+      "kingDefenseAttackerCapture": 18000,
+      "kingDefensePowerPieceCapture": 7000,
+      "defeatedSelfPenalty": -35000,
+      "defeatedOpponentReward": 8000,
+      "checkedSelfPenalty": 4000,
+      "checkedOpponentReward": 1800,
+      "soldierAdvanceEval": 18,
+      "mobilityEval": 8,
+      "openingCannonOutPenalty": -130,
+      "openingMajorDeveloped": 110,
+      "advisorElephantHome": 40,
+      "advisorElephantAwayPenalty": -160,
+      "directCheckPenalty": 28000,
+      "directAttackerPenalty": 18000,
+      "palacePressurePenalty": 1050,
+      "defenderBonus": 950,
+      "generalHomeBonus": 1200,
+      "generalAwayPenalty": 1800,
+      "balanceStableBonus": 350,
+      "balanceGapPenalty": 0.3,
+      "balanceGapPenaltyMax": 2400,
+      "tacticalGeneralRiskMultiplier": 3.5,
+      "tacticalPieceRiskMultiplier": 0.6,
+      "tacticalOpponentRiskReward": 0.35
+    }
+  }
+}

@@ -1,8 +1,10 @@
-import { chooseAiMove, evaluateAiState } from "./ai";
+import { chooseAiMove, evaluateAiState, type AiMove } from "./ai";
 import { aiStyleForKingdom, defaultAiProfile, type AiProfile } from "./ai-profile";
 import { aiScenarios } from "./ai-scenarios";
 import type { Kingdom } from "./board";
-import { createInitialGameState, type GameState } from "./game-state";
+import { capturedPieceAt, createInitialGameState, type GameState } from "./game-state";
+import { getLegalMoves } from "./moves";
+import type { Piece } from "./pieces";
 import { applyMove } from "./rules";
 
 export interface AiBenchmarkReport {
@@ -23,6 +25,10 @@ export interface AiBenchmarkReport {
     repetitionStops: number;
     openingDiversity: number;
     averageSafety: number;
+    profitableCaptureMisses: number;
+    hangingPieceMisses: number;
+    repeatedQuietMoves: number;
+    averageThinkMs: number;
   };
 }
 
@@ -76,7 +82,11 @@ export function runAiBenchmark(profile: AiProfile = defaultAiProfile, options: A
     selfPlay.naturalWins * 180 +
     selfPlay.openingDiversity * 22 +
     selfPlay.averageSafety * 0.08 +
-    selfPlay.averagePlies * 1.1;
+    selfPlay.averagePlies * 1.1 -
+    selfPlay.profitableCaptureMisses * 180 -
+    selfPlay.hangingPieceMisses * 140 -
+    selfPlay.repeatedQuietMoves * 110 -
+    selfPlay.averageThinkMs * 0.08;
 
   return {
     score: Math.round(scenarioScore + selfPlayScore),
@@ -165,14 +175,14 @@ function runScenarioBenchmark(profile: AiProfile): AiBenchmarkReport["scenario"]
 }
 
 function runSelfPlayBenchmark(profile: AiProfile, options: AiBenchmarkOptions): AiBenchmarkReport["selfPlay"] {
-  const targetGames = options.selfPlayGames ?? 9;
+  const targetGames = options.selfPlayGames ?? 3;
   const seeds = openingSeeds();
   const random = seededRandom(options.seed ?? 20260507);
   const games = Array.from({ length: targetGames }, (_, index) => {
     const seedIndex = index < seeds.length ? index : Math.floor(random() * seeds.length);
 
     return playSelfPlayGame(profile, seeds[seedIndex], {
-      maxPlies: options.maxPlies ?? 48,
+      maxPlies: options.maxPlies ?? 24,
       seed: Math.floor(random() * 4294967296),
     });
   });
@@ -197,6 +207,10 @@ function runSelfPlayBenchmark(profile: AiProfile, options: AiBenchmarkOptions): 
     repetitionStops: games.filter((game) => game.reason === "repetition").length,
     openingDiversity: new Set(games.map((game) => game.openingSignature)).size,
     averageSafety: Math.round(games.reduce((sum, game) => sum + game.safety, 0) / games.length),
+    profitableCaptureMisses: games.reduce((sum, game) => sum + game.profitableCaptureMisses, 0),
+    hangingPieceMisses: games.reduce((sum, game) => sum + game.hangingPieceMisses, 0),
+    repeatedQuietMoves: games.reduce((sum, game) => sum + game.repeatedQuietMoves, 0),
+    averageThinkMs: Math.round(games.reduce((sum, game) => sum + game.thinkMs, 0) / Math.max(1, games.reduce((sum, game) => sum + game.aiMoves, 0))),
   };
 }
 
@@ -212,12 +226,22 @@ function playSelfPlayGame(
   reason: "winner" | "repetition" | "ply-limit" | "no-move";
   openingSignature: string;
   safety: number;
+  profitableCaptureMisses: number;
+  hangingPieceMisses: number;
+  repeatedQuietMoves: number;
+  thinkMs: number;
+  aiMoves: number;
 } {
   let state = createInitialGameState();
   let plies = 0;
   let earlyDefeats = 0;
   let reason: "winner" | "repetition" | "ply-limit" | "no-move" = "ply-limit";
   const positions = new Map<string, number>();
+  let profitableCaptureMisses = 0;
+  let hangingPieceMisses = 0;
+  let repeatedQuietMoves = 0;
+  let thinkMs = 0;
+  let aiMoves = 0;
 
   for (const seed of seedMoves) {
     if (state.winner) {
@@ -244,20 +268,41 @@ function playSelfPlayGame(
     }
 
     const beforeDefeats = state.defeatedKingdoms.length;
+    const tacticalBaseline = tacticalBaselineFor(state, state.currentKingdom, profile);
+    const startedAt = performance.now();
     const move = chooseAiMove(state, state.currentKingdom, profile, {
       style: aiStyleForKingdom(state.currentKingdom),
       seed: options.seed + plies * 97,
-      timeBudgetMs: 120,
+      timeBudgetMs: 40,
+      maxDepth: 1,
       explorationRate: plies < 8 ? 0.18 : 0,
       explorationTop: 4,
       explorationSlack: 680,
       explorationTemperature: 420,
-      openingSearchDepth: 1,
+      openingSearchDepth: 0,
+      maxQuiescenceDepth: 1,
+      skillProfile: "fast",
     });
+    thinkMs += performance.now() - startedAt;
 
     if (!move) {
       reason = "no-move";
       break;
+    }
+
+    aiMoves += 1;
+    const capturedPiece = capturedPieceAt(state, move.pieceId, move.target);
+
+    if (tacticalBaseline.hasProfitableCapture && !capturedPiece) {
+      profitableCaptureMisses += 1;
+    }
+
+    if (tacticalBaseline.hangingPieceId && move.pieceId !== tacticalBaseline.hangingPieceId && !capturesThreateningPiece(state, move, tacticalBaseline.hangingPieceId)) {
+      hangingPieceMisses += 1;
+    }
+
+    if (!capturedPiece && reversesRecentOwnQuietMove(state, move)) {
+      repeatedQuietMoves += 1;
     }
 
     state = applyMove(state, move.pieceId, move.target);
@@ -287,7 +332,71 @@ function playSelfPlayGame(
     reason,
     openingSignature: seedMoves.map((move) => `${move.pieceId}-${move.target}`).join(",") || "initial",
     safety,
+    profitableCaptureMisses,
+    hangingPieceMisses,
+    repeatedQuietMoves,
+    thinkMs,
+    aiMoves,
   };
+}
+
+function tacticalBaselineFor(
+  state: GameState,
+  kingdom: Kingdom,
+  profile: AiProfile,
+): {
+  hasProfitableCapture: boolean;
+  hangingPieceId: string | null;
+} {
+  const actions = state.pieces
+    .filter((piece) => piece.controller === kingdom && piece.blocksMovement && !piece.defeated)
+    .flatMap((piece) => {
+      return getLegalMoves(state, piece).map((target) => ({ pieceId: piece.id, from: piece.position, target }));
+    });
+  const hasProfitableCapture = actions.some((action) => {
+    const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+    const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+    return Boolean(
+      movingPiece &&
+        capturedPiece &&
+        !capturedPiece.defeated &&
+        (capturedPiece.type === "general" || localPieceValue(capturedPiece, profile) >= localPieceValue(movingPiece, profile) * 0.55),
+    );
+  });
+  const hangingPiece = state.pieces
+    .filter((piece) => piece.controller === kingdom && piece.blocksMovement && !piece.defeated)
+    .filter((piece) => piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse")
+    .find((piece) => isAttackedByOpponent(state, piece, kingdom));
+
+  return {
+    hasProfitableCapture,
+    hangingPieceId: hangingPiece?.id ?? null,
+  };
+}
+
+function capturesThreateningPiece(state: GameState, move: AiMove, hangingPieceId: string): boolean {
+  const hangingPiece = state.pieces.find((piece) => piece.id === hangingPieceId);
+  const capturedPiece = capturedPieceAt(state, move.pieceId, move.target);
+
+  return Boolean(hangingPiece && capturedPiece && getLegalMoves(state, capturedPiece).includes(hangingPiece.position));
+}
+
+function reversesRecentOwnQuietMove(state: GameState, move: AiMove): boolean {
+  const movingPiece = state.pieces.find((piece) => piece.id === move.pieceId);
+  const lastOwnMove = (state.moveHistory ?? []).filter((record) => record.kingdom === movingPiece?.controller).at(-1);
+
+  return Boolean(lastOwnMove && lastOwnMove.pieceId === move.pieceId && lastOwnMove.from === move.target && lastOwnMove.target === move.from);
+}
+
+function isAttackedByOpponent(state: GameState, piece: Piece, kingdom: Kingdom): boolean {
+  return state.pieces.some((candidate) => {
+    return candidate.controller !== kingdom && candidate.blocksMovement && !candidate.defeated && getLegalMoves(state, candidate).includes(piece.position);
+  });
+}
+
+function localPieceValue(piece: Piece, profile: AiProfile): number {
+  return profile.pieceValues[piece.type];
 }
 
 function openingSeeds(): Array<Array<{ pieceId: string; target: string }>> {

@@ -26,15 +26,59 @@ export interface AiMoveOptions {
   style?: AiStyleProfile;
   seed?: number;
   maxDepth?: number;
+  skillProfile?: "fast" | "balanced" | "tactical";
+  styleDiversitySeed?: number;
+  debugStats?: SearchStats;
+  maxQuiescenceDepth?: number;
+}
+
+export interface SearchStats {
+  completedDepth: number;
+  nodes: number;
+  ttHits: number;
+  cutoffs: number;
+  timedOut: boolean;
+  principalVariation: AiMove[];
+  topCandidates: Array<{
+    move: AiMove;
+    score: number;
+  }>;
 }
 
 const winScore = 1_000_000;
 const minimumSearchBudgetMs = 12;
 const defaultSearchBudgetMs = 80;
+const profitableCaptureMargin = 120;
+const hangingPieceMargin = 220;
 
 interface SearchContext {
   deadline: number;
   timedOut: boolean;
+  stats: SearchStats;
+  tt: Map<string, TranspositionEntry>;
+  killerMoves: Map<number, AiMove[]>;
+  history: Map<string, number>;
+  maxQuiescenceDepth: number;
+  principalVariation: AiMove[];
+}
+
+interface TranspositionEntry {
+  depth: number;
+  score: number;
+  flag: "exact" | "lower" | "upper";
+  bestMove: AiMove | null;
+}
+
+export function createSearchStats(): SearchStats {
+  return {
+    completedDepth: 0,
+    nodes: 0,
+    ttHits: 0,
+    cutoffs: 0,
+    timedOut: false,
+    principalVariation: [],
+    topCandidates: [],
+  };
 }
 
 export function chooseAiMove(
@@ -46,7 +90,15 @@ export function chooseAiMove(
   const moveOptions = options.random || options.seed === undefined ? options : { ...options, random: seededRandom(options.seed) };
   const style = options.style ?? aiStyleForKingdom(kingdom);
   const context = createSearchContext(moveOptions);
-  const actions = getCandidateActions(state, kingdom, profile, style);
+  const fastOpening =
+    isOpeningPhase(state) &&
+    moveOptions.timeBudgetMs === undefined &&
+    moveOptions.openingSearchDepth === undefined &&
+    (moveOptions.explorationRate ?? 0) <= 0 &&
+    !state.checkedKingdoms.includes(kingdom);
+  const lowBudget = (moveOptions.timeBudgetMs ?? Number.POSITIVE_INFINITY) <= 150 && !state.checkedKingdoms.includes(kingdom);
+  const fastCandidates = fastOpening || lowBudget;
+  const actions = fastCandidates ? getFastOpeningCandidateActions(state, kingdom, profile, style) : getCandidateActions(state, kingdom, profile, style, context);
 
   if (!actions.length) {
     return null;
@@ -68,33 +120,73 @@ export function chooseAiMove(
     return generalCapture;
   }
 
-  const depth = searchDepthForState(state, profile, moveOptions);
-  const rootActions = actions.slice(0, rootBeamForState(state, profile, moveOptions, depth));
+  const profitableCapture = actions
+    .filter((action) => {
+      return isProfitableCapture(state, action, kingdom, profile) && doesNotLeaveKingdomInCheck(state, action, kingdom);
+    })
+    .sort((left, right) => {
+      return staticExchangeScore(state, right, kingdom, profile) - staticExchangeScore(state, left, kingdom, profile) || compareAction(left, right);
+    })[0];
+
+  if (profitableCapture && staticExchangeScore(state, profitableCapture, kingdom, profile) >= profile.pieceValues.horse * 0.5) {
+    return profitableCapture;
+  }
+
+  const targetDepth = lowBudget ? Math.min(1, searchDepthForState(state, profile, moveOptions)) : searchDepthForState(state, profile, moveOptions);
+  const rootLimit = rootBeamForState(state, profile, moveOptions, targetDepth);
+  const rootActions = fastCandidates ? actions.slice(0, rootLimit) : rootActionWindow(state, actions, kingdom, profile, style, rootLimit);
   let bestAction = rootActions[0];
   let bestScore = Number.NEGATIVE_INFINITY;
-  const scoredActions: Array<{ action: AiMove; score: number }> = [];
+  let scoredActions: Array<{ action: AiMove; score: number }> = [];
 
-  const searchProfile = searchProfileForState(state, profile, moveOptions, depth);
-
-  for (const action of rootActions) {
+  for (let depth = 0; depth <= targetDepth; depth += 1) {
     if (!hasSearchTime(context) && scoredActions.length > 0) {
       break;
     }
 
-    const nextState = applySearchMove(state, action.pieceId, action.target);
-    const score =
-      (depth > 0
-        ? evaluateAfterResponses(nextState, kingdom, depth, searchProfile, style, context)
-        : evaluateState(nextState, kingdom, searchProfile, style) + forcingOpportunityScore(nextState, kingdom, searchProfile, style)) +
-      cheapActionScore(state, action, kingdom, profile, style) * profile.scoring.rootActionWeight;
+    const searchProfile = searchProfileForState(state, profile, moveOptions, depth);
+    const orderedRootActions = orderActions(state, rootActions, kingdom, searchProfile, style, context, 0, context.principalVariation[0]);
+    const iterationScores: Array<{ action: AiMove; score: number }> = [];
+    let iterationBestAction = bestAction;
+    let iterationBestScore = Number.NEGATIVE_INFINITY;
 
-    scoredActions.push({ action, score });
+    for (const action of orderedRootActions) {
+      if (!hasSearchTime(context) && iterationScores.length > 0) {
+        break;
+      }
 
-    if (score > bestScore || (score === bestScore && compareAction(action, bestAction) < 0)) {
-      bestAction = action;
-      bestScore = score;
+      const nextState = applySearchMove(state, action.pieceId, action.target);
+      const score =
+        (depth > 0
+          ? evaluateAfterResponses(nextState, kingdom, depth, searchProfile, style, context)
+          : evaluateState(nextState, kingdom, searchProfile, style) + forcingOpportunityScore(nextState, kingdom, searchProfile, style)) +
+        cheapActionScore(state, action, kingdom, profile, style) * profile.scoring.rootActionWeight +
+        styleRootPolicyScore(state, action, kingdom, profile, style, moveOptions);
+
+      iterationScores.push({ action, score });
+
+      if (score > iterationBestScore || (score === iterationBestScore && compareRootAction(action, iterationBestAction, style, moveOptions) < 0)) {
+        iterationBestAction = action;
+        iterationBestScore = score;
+      }
+    }
+
+    if (iterationScores.length === orderedRootActions.length || !context.timedOut) {
+      bestAction = iterationBestAction;
+      bestScore = iterationBestScore;
+      scoredActions = iterationScores.sort((left, right) => right.score - left.score || compareAction(left.action, right.action));
+      context.stats.completedDepth = depth;
+      context.principalVariation = [bestAction, ...principalVariationFor(applySearchMove(state, bestAction.pieceId, bestAction.target), kingdom, context)];
+    }
+
+    if (context.timedOut) {
+      break;
     }
   }
+
+  context.stats.timedOut = context.timedOut;
+  context.stats.principalVariation = context.principalVariation;
+  context.stats.topCandidates = scoredActions.slice(0, 5).map((item) => ({ move: item.action, score: Math.round(item.score) }));
 
   const exploratoryAction = pickExploratoryAction(scoredActions, bestScore, moveOptions);
 
@@ -186,6 +278,8 @@ function search(
   aiStyle: AiStyleProfile,
   context: SearchContext,
 ): number {
+  context.stats.nodes += 1;
+
   if (!hasSearchTime(context)) {
     return evaluateState(state, aiKingdom, profile, aiStyle);
   }
@@ -196,15 +290,38 @@ function search(
 
   if (depth === 0) {
     return (
-      evaluateState(state, aiKingdom, profile, aiStyle) +
+      quiescenceSearch(state, aiKingdom, profile, aiStyle, context, 0) +
       tacticalStabilityScore(state, aiKingdom, profile, aiStyle) +
       forcingOpportunityScore(state, aiKingdom, profile, aiStyle)
     );
   }
 
+  const originalAlpha = alpha;
+  const originalBeta = beta;
+  const ttKey = `${aiKingdom}|${searchStateKey(state)}`;
+  const ttEntry = context.tt.get(ttKey);
+
+  if (ttEntry && ttEntry.depth >= depth) {
+    context.stats.ttHits += 1;
+
+    if (ttEntry.flag === "exact") {
+      return ttEntry.score;
+    }
+
+    if (ttEntry.flag === "lower") {
+      alpha = Math.max(alpha, ttEntry.score);
+    } else {
+      beta = Math.min(beta, ttEntry.score);
+    }
+
+    if (alpha >= beta) {
+      return ttEntry.score;
+    }
+  }
+
   const currentKingdom = state.currentKingdom;
   const currentStyle = currentKingdom === aiKingdom ? aiStyle : aiStyleForKingdom(currentKingdom);
-  const actions = getCandidateActions(state, currentKingdom, profile, currentStyle).slice(
+  const actions = orderActions(state, getCandidateActions(state, currentKingdom, profile, currentStyle, context), currentKingdom, profile, currentStyle, context, depth, ttEntry?.bestMove).slice(
     0,
     currentKingdom === aiKingdom ? profile.responseBeam : profile.thirdPlayerBeam,
   );
@@ -215,24 +332,31 @@ function search(
 
   if (currentKingdom === aiKingdom) {
     let value = Number.NEGATIVE_INFINITY;
+    let bestMove: AiMove | null = null;
 
     for (const action of actions) {
-      value = Math.max(
-        value,
-        search(applySearchMove(state, action.pieceId, action.target), aiKingdom, depth - 1, alpha, beta, profile, aiStyle, context),
-      );
+      const score = search(applySearchMove(state, action.pieceId, action.target), aiKingdom, depth - 1, alpha, beta, profile, aiStyle, context);
+
+      if (score > value) {
+        value = score;
+        bestMove = action;
+      }
+
       alpha = Math.max(alpha, value);
 
       if (beta <= alpha) {
+        recordCutoff(context, depth, action);
         break;
       }
     }
 
+    storeTransposition(context, ttKey, depth, value, originalAlpha, originalBeta, bestMove);
     return value;
   }
 
   let bestActorScore = Number.NEGATIVE_INFINITY;
   let selectedAiScore = Number.POSITIVE_INFINITY;
+  let bestMove: AiMove | null = null;
 
   for (const action of actions) {
     const nextState = applySearchMove(state, action.pieceId, action.target);
@@ -257,19 +381,28 @@ function search(
     ) {
       bestActorScore = actorDecisionScore;
       selectedAiScore = aiScore;
+      bestMove = action;
     }
 
     beta = Math.min(beta, selectedAiScore);
 
     if (beta <= alpha) {
+      recordCutoff(context, depth, action);
       break;
     }
   }
 
+  storeTransposition(context, ttKey, depth, selectedAiScore, originalAlpha, originalBeta, bestMove);
   return selectedAiScore;
 }
 
-function getCandidateActions(state: GameState, kingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): AiMove[] {
+function getCandidateActions(
+  state: GameState,
+  kingdom: Kingdom,
+  profile: AiProfile,
+  style: AiStyleProfile,
+  context?: SearchContext,
+): AiMove[] {
   const actions = getAllActions(state, kingdom).sort((left, right) => {
     const scoreDiff = cheapActionScore(state, right, kingdom, profile, style) - cheapActionScore(state, left, kingdom, profile, style);
 
@@ -282,18 +415,16 @@ function getCandidateActions(state: GameState, kingdom: Kingdom, profile: AiProf
     return (
       (capturedPiece?.type === "general" && !isNeutralBlocker(capturedPiece)) ||
       isKingDefenseCapture(state, action, kingdom) ||
-      givesDirectCheck(state, action, kingdom)
+      givesDirectCheck(state, action, kingdom) ||
+      isProfitableCapture(state, action, kingdom, profile) ||
+      addressesHangingPiece(state, action, kingdom, profile)
     );
   });
   const scanActions = inCheck ? actions : uniqueActions([...highPriorityActions, ...actions.slice(0, profile.safetyScanLimit)]);
   const safeActions = scanActions.filter((action) => doesNotLeaveKingdomInCheck(state, action, kingdom));
   const candidates = safeActions.length ? safeActions : scanActions;
 
-  return candidates.sort((left, right) => {
-    const scoreDiff = cheapActionScore(state, right, kingdom, profile, style) - cheapActionScore(state, left, kingdom, profile, style);
-
-    return scoreDiff || compareAction(left, right);
-  });
+  return orderActions(state, candidates, kingdom, profile, style, context, 0);
 }
 
 function getAllActions(state: GameState, kingdom: Kingdom): AiMove[] {
@@ -306,6 +437,141 @@ function getAllActions(state: GameState, kingdom: Kingdom): AiMove[] {
         target,
       }));
     });
+}
+
+function getFastOpeningCandidateActions(state: GameState, kingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): AiMove[] {
+  return getAllActions(state, kingdom)
+    .filter((action) => {
+      const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+      return Boolean(capturedPiece) || !wouldMoveGeneralQuietly(state, action);
+    })
+    .sort((left, right) => {
+      return fastOpeningActionScore(state, right, kingdom, profile, style) - fastOpeningActionScore(state, left, kingdom, profile, style) || compareAction(left, right);
+    });
+}
+
+function fastOpeningActionScore(
+  state: GameState,
+  action: AiMove,
+  kingdom: Kingdom,
+  profile: AiProfile,
+  style: AiStyleProfile,
+): number {
+  const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+  const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+  if (!movingPiece) {
+    return 0;
+  }
+
+  let score = style.preferredPieces[movingPiece.type] ?? 0;
+
+  if (capturedPiece && !isNeutralBlocker(capturedPiece)) {
+    score += pieceValue(capturedPiece, profile) * 4 - pieceValue(movingPiece, profile);
+    score += capturedPiece.type === "general" ? profile.scoring.generalCaptureBonus : 0;
+  }
+
+  score += developmentScore(state, action, movingPiece, profile) * style.developmentMultiplier;
+  score += movingPiece.type === "soldier" ? soldierAdvance({ ...movingPiece, position: action.target }) * profile.scoring.soldierAdvanceAction : 0;
+  score += targetPressureScore(state, action.target, kingdom, profile, style);
+
+  return score;
+}
+
+function wouldMoveGeneralQuietly(state: GameState, action: AiMove): boolean {
+  const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+
+  return movingPiece?.type === "general" && !capturedPieceAt(state, action.pieceId, action.target);
+}
+
+function rootActionWindow(
+  state: GameState,
+  actions: AiMove[],
+  kingdom: Kingdom,
+  profile: AiProfile,
+  style: AiStyleProfile,
+  limit: number,
+): AiMove[] {
+  const forced = actions.filter((action) => {
+    return isProfitableCapture(state, action, kingdom, profile) || addressesHangingPiece(state, action, kingdom, profile);
+  });
+
+  return uniqueActions([...forced, ...actions]).slice(0, Math.max(limit, Math.min(actions.length, forced.length + 4))).sort((left, right) => {
+    return actionOrderingScore(state, right, kingdom, profile, style) - actionOrderingScore(state, left, kingdom, profile, style) || compareAction(left, right);
+  });
+}
+
+function orderActions(
+  state: GameState,
+  actions: AiMove[],
+  kingdom: Kingdom,
+  profile: AiProfile,
+  style: AiStyleProfile,
+  context: SearchContext | undefined,
+  ply: number,
+  preferredMove?: AiMove | null,
+): AiMove[] {
+  const killers = context?.killerMoves.get(ply) ?? [];
+
+  return [...actions].sort((left, right) => {
+    const scoreDiff =
+      actionOrderingScore(state, right, kingdom, profile, style, context, ply, preferredMove, killers) -
+      actionOrderingScore(state, left, kingdom, profile, style, context, ply, preferredMove, killers);
+
+    return scoreDiff || compareAction(left, right);
+  });
+}
+
+function actionOrderingScore(
+  state: GameState,
+  action: AiMove,
+  kingdom: Kingdom,
+  profile: AiProfile,
+  style: AiStyleProfile,
+  context?: SearchContext,
+  ply = 0,
+  preferredMove?: AiMove | null,
+  killers: AiMove[] = [],
+): number {
+  const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+  const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+  let score = cheapActionScore(state, action, kingdom, profile, style);
+
+  if (!movingPiece) {
+    return score;
+  }
+
+  if (preferredMove && sameMove(action, preferredMove)) {
+    score += 1_000_000;
+  }
+
+  if (killers.some((move) => sameMove(move, action))) {
+    score += 36_000;
+  }
+
+  score += context?.history.get(actionKey(action)) ?? 0;
+
+  if (capturedPiece && !isNeutralBlocker(capturedPiece)) {
+    score += pieceValue(capturedPiece, profile) * 11 - pieceValue(movingPiece, profile) * 2;
+    score += staticExchangeScore(state, action, kingdom, profile) * 4;
+  }
+
+  if (state.checkedKingdoms.includes(kingdom)) {
+    score += doesNotLeaveKingdomInCheck(state, action, kingdom) ? 45_000 : -90_000;
+  }
+
+  if (givesDirectCheck(state, action, kingdom)) {
+    score += 18_000;
+  }
+
+  if (addressesHangingPiece(state, action, kingdom, profile)) {
+    score += 14_000 + Math.max(0, threatenedPieceReliefScore(state, action, movingPiece, capturedPiece, kingdom, profile, style));
+  }
+
+  score += Math.max(0, 16 - ply) * 5;
+
+  return score;
 }
 
 function applySearchMove(state: GameState, pieceId: string, target: PointId): GameState {
@@ -355,6 +621,9 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, pr
       score += profile.scoring.generalCaptureBonus;
     }
 
+    const see = staticExchangeScore(state, action, kingdom, profile);
+
+    score += Math.max(-pieceValue(movingPiece, profile), see) * 1.8;
     score -= exchangeRiskPenalty(state, action, movingPiece, capturedPiece, kingdom, profile, style);
     score -= openingRaidPenalty(state, action, movingPiece, capturedPiece, profile);
   }
@@ -374,6 +643,7 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, pr
   score += developmentScore(state, action, movingPiece, profile) * style.developmentMultiplier;
   score += targetPressureScore(state, action.target, kingdom, profile, style);
   score += tacticalActionScore(state, action, movingPiece, capturedPiece, kingdom, profile, style);
+  score += threatenedPieceReliefScore(state, action, movingPiece, capturedPiece, kingdom, profile, style);
   score += style.preferredPieces[movingPiece.type] ?? 0;
   score -= quietExposurePenalty(state, action, movingPiece, capturedPiece, kingdom, profile, style);
   score -= repetitiveQuietMovePenalty(state, action, movingPiece, capturedPiece);
@@ -474,6 +744,76 @@ function evaluateThirdPlayerResponse(
   return selectedAiScore;
 }
 
+function quiescenceSearch(
+  state: GameState,
+  aiKingdom: Kingdom,
+  profile: AiProfile,
+  aiStyle: AiStyleProfile,
+  context: SearchContext,
+  qDepth: number,
+): number {
+  context.stats.nodes += 1;
+
+  const standPat =
+    evaluateState(state, aiKingdom, profile, aiStyle) +
+    tacticalStabilityScore(state, aiKingdom, profile, aiStyle) +
+    forcingOpportunityScore(state, aiKingdom, profile, aiStyle);
+
+  if (!hasSearchTime(context) || state.winner || qDepth >= context.maxQuiescenceDepth) {
+    return standPat;
+  }
+
+  const currentKingdom = state.currentKingdom;
+  const currentStyle = currentKingdom === aiKingdom ? aiStyle : aiStyleForKingdom(currentKingdom);
+  const tacticalActions = getCandidateActions(state, currentKingdom, profile, currentStyle, context)
+    .filter((action) => {
+      const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+      return (
+        Boolean(capturedPiece && !isNeutralBlocker(capturedPiece)) ||
+        givesDirectCheck(state, action, currentKingdom) ||
+        state.checkedKingdoms.includes(currentKingdom) ||
+        addressesHangingPiece(state, action, currentKingdom, profile)
+      );
+    })
+    .slice(0, currentKingdom === aiKingdom ? 8 : 5);
+
+  if (!tacticalActions.length) {
+    return standPat;
+  }
+
+  if (currentKingdom === aiKingdom) {
+    let best = standPat;
+
+    for (const action of tacticalActions) {
+      const score = quiescenceSearch(applySearchMove(state, action.pieceId, action.target), aiKingdom, profile, aiStyle, context, qDepth + 1);
+
+      best = Math.max(best, score);
+    }
+
+    return best;
+  }
+
+  let bestActorScore = Number.NEGATIVE_INFINITY;
+  let selectedAiScore = standPat;
+
+  for (const action of tacticalActions) {
+    const nextState = applySearchMove(state, action.pieceId, action.target);
+    const actorScore =
+      evaluateState(nextState, currentKingdom, profile, currentStyle) +
+      tacticalStabilityScore(nextState, currentKingdom, profile, currentStyle) +
+      coalitionPressureScore(nextState, currentKingdom, aiKingdom, profile, currentStyle);
+    const aiScore = quiescenceSearch(nextState, aiKingdom, profile, aiStyle, context, qDepth + 1);
+
+    if (actorScore > bestActorScore || (actorScore === bestActorScore && aiScore < selectedAiScore)) {
+      bestActorScore = actorScore;
+      selectedAiScore = aiScore;
+    }
+  }
+
+  return selectedAiScore;
+}
+
 export function evaluateAiState(
   state: GameState,
   aiKingdom: Kingdom,
@@ -524,7 +864,9 @@ function evaluateState(state: GameState, aiKingdom: Kingdom, profile: AiProfile,
 
   score += state.checkedKingdoms.filter((kingdom) => kingdom !== aiKingdom).length * profile.scoring.checkedOpponentReward * style.attackMultiplier;
   score += kingSafetyScore(state, aiKingdom, profile) * style.safetyMultiplier;
+  score += pieceSafetyScore(state, aiKingdom, profile, style);
   score += threePlayerBalanceScore(material, aiKingdom, profile) * style.balanceMultiplier;
+  score -= positionRepetitionScore(state, aiKingdom);
 
   return score;
 }
@@ -868,10 +1210,25 @@ function strongestOpponent(material: Record<Kingdom, number>, aiKingdom: Kingdom
 
 function createSearchContext(options: AiMoveOptions): SearchContext {
   const budget = options.timeBudgetMs ?? ((options.explorationRate ?? 0) > 0 ? 1_000 : defaultSearchBudgetMs);
+  const stats = options.debugStats ?? createSearchStats();
+
+  stats.completedDepth = 0;
+  stats.nodes = 0;
+  stats.ttHits = 0;
+  stats.cutoffs = 0;
+  stats.timedOut = false;
+  stats.principalVariation = [];
+  stats.topCandidates = [];
 
   return {
     deadline: Number.isFinite(budget) ? performance.now() + Math.max(minimumSearchBudgetMs, budget) : Number.POSITIVE_INFINITY,
     timedOut: false,
+    stats,
+    tt: new Map(),
+    killerMoves: new Map(),
+    history: new Map(),
+    maxQuiescenceDepth: options.maxQuiescenceDepth ?? (options.skillProfile === "fast" ? 1 : options.skillProfile === "tactical" ? 3 : 2),
+    principalVariation: [],
   };
 }
 
@@ -886,6 +1243,106 @@ function hasSearchTime(context: SearchContext): boolean {
 
   context.timedOut = true;
   return false;
+}
+
+function recordCutoff(context: SearchContext, ply: number, action: AiMove): void {
+  context.stats.cutoffs += 1;
+  const killers = context.killerMoves.get(ply) ?? [];
+
+  context.killerMoves.set(ply, uniqueActions([action, ...killers]).slice(0, 2));
+  context.history.set(actionKey(action), (context.history.get(actionKey(action)) ?? 0) + Math.max(1, ply * ply));
+}
+
+function storeTransposition(
+  context: SearchContext,
+  key: string,
+  depth: number,
+  score: number,
+  alpha: number,
+  beta: number,
+  bestMove: AiMove | null,
+): void {
+  const flag = score <= alpha ? "upper" : score >= beta ? "lower" : "exact";
+
+  context.tt.set(key, { depth, score, flag, bestMove });
+}
+
+function principalVariationFor(state: GameState, aiKingdom: Kingdom, context: SearchContext): AiMove[] {
+  const variation: AiMove[] = [];
+  let current = state;
+
+  for (let index = 0; index < 6; index += 1) {
+    const entry = context.tt.get(`${aiKingdom}|${searchStateKey(current)}`);
+
+    if (!entry?.bestMove) {
+      break;
+    }
+
+    variation.push(entry.bestMove);
+
+    try {
+      current = applySearchMove(current, entry.bestMove.pieceId, entry.bestMove.target);
+    } catch {
+      break;
+    }
+  }
+
+  return variation;
+}
+
+function styleRootPolicyScore(
+  state: GameState,
+  action: AiMove,
+  kingdom: Kingdom,
+  profile: AiProfile,
+  style: AiStyleProfile,
+  options: AiMoveOptions,
+): number {
+  const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+  const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+  let score = 0;
+
+  if (!movingPiece) {
+    return score;
+  }
+
+  if (style.id === "aggressive") {
+    score += targetPressureScore(state, action.target, kingdom, profile, style) * 3;
+    score += givesDirectCheck(state, action, kingdom) ? 1_400 : 0;
+    score += capturedPiece && !isNeutralBlocker(capturedPiece) ? pieceValue(capturedPiece, profile) * 0.45 : 0;
+  }
+
+  if (style.id === "solid") {
+    score += threatenedPieceReliefScore(state, action, movingPiece, capturedPiece, kingdom, profile, style) * 0.65;
+    score += kingSafetyScore(applySearchMove(state, action.pieceId, action.target), kingdom, profile) * 0.08;
+  }
+
+  if (style.id === "mobile") {
+    score += movingPiece.type === "horse" || movingPiece.type === "cannon" ? 520 : 0;
+    score += mobilityDeltaScore(state, action, movingPiece, profile) * 18;
+  }
+
+  return score + diversityJitter(action, options.styleDiversitySeed ?? options.seed ?? 0, style.id);
+}
+
+function compareRootAction(left: AiMove, right: AiMove, style: AiStyleProfile, options: AiMoveOptions): number {
+  const diff =
+    diversityJitter(left, options.styleDiversitySeed ?? options.seed ?? 0, style.id) -
+    diversityJitter(right, options.styleDiversitySeed ?? options.seed ?? 0, style.id);
+
+  return diff || compareAction(left, right);
+}
+
+function diversityJitter(action: AiMove, seed: number, styleId: string): number {
+  const key = `${styleId}:${seed}:${action.pieceId}:${action.target}`;
+  let hash = 2166136261;
+
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0) % 401;
 }
 
 function tacticalActionScore(
@@ -940,6 +1397,223 @@ function quietExposurePenalty(
   }
 
   return pieceValue(movingPiece, profile) * 0.42 / style.riskTolerance;
+}
+
+function threatenedPieceReliefScore(
+  state: GameState,
+  action: AiMove,
+  movingPiece: Piece,
+  capturedPiece: Piece | null,
+  kingdom: Kingdom,
+  profile: AiProfile,
+  style: AiStyleProfile,
+): number {
+  let score = 0;
+  const wasHanging = isPieceHanging(state, movingPiece, profile);
+
+  if (wasHanging) {
+    const nextState = applySearchMove(state, action.pieceId, action.target);
+    const movedPiece = nextState.pieces.find((piece) => piece.id === action.pieceId);
+
+    if (movedPiece && !isPieceHanging(nextState, movedPiece, profile)) {
+      score += pieceValue(movingPiece, profile) * 1.2 * style.safetyMultiplier;
+    }
+  }
+
+  if (capturedPiece && !isNeutralBlocker(capturedPiece)) {
+    const ownVictims = state.pieces.filter((piece) => {
+      return piece.controller === kingdom && piece.blocksMovement && getLegalMoves(state, capturedPiece).includes(piece.position);
+    });
+    const bestVictimValue = Math.max(0, ...ownVictims.map((piece) => pieceValue(piece, profile)));
+
+    score += bestVictimValue * 0.45 * style.safetyMultiplier;
+  }
+
+  const protectedOwnPieces = state.pieces.filter((piece) => {
+    return piece.controller === kingdom && piece.blocksMovement && piece.id !== action.pieceId && isPieceHanging(state, piece, profile);
+  });
+
+  for (const ownPiece of protectedOwnPieces) {
+    const attackers = attackersOf(state, ownPiece.position, kingdom);
+
+    if (attackers.some((attacker) => capturedPiece?.id === attacker.id)) {
+      score += pieceValue(ownPiece, profile) * 0.9;
+    }
+  }
+
+  return score;
+}
+
+function pieceSafetyScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): number {
+  let score = 0;
+
+  for (const piece of state.pieces) {
+    if (!piece.blocksMovement || isNeutralBlocker(piece)) {
+      continue;
+    }
+
+    const attackers = attackersOf(state, piece.position, piece.controller);
+
+    if (!attackers.length) {
+      continue;
+    }
+
+    const value = pieceValue(piece, profile);
+    const defenders = defendersOf(state, piece.position, piece.controller, piece.id);
+    const hanging = defenders.length === 0 || cheapestPieceValue(attackers, profile) < value - hangingPieceMargin;
+    const pressure = hanging ? value * 0.78 : value * 0.22;
+
+    if (piece.controller === aiKingdom) {
+      score -= pressure / style.riskTolerance;
+    } else {
+      score += pressure * 0.36 * style.attackMultiplier;
+    }
+  }
+
+  return score;
+}
+
+function isProfitableCapture(state: GameState, action: AiMove, kingdom: Kingdom, profile: AiProfile): boolean {
+  const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+  if (!capturedPiece || isNeutralBlocker(capturedPiece)) {
+    return false;
+  }
+
+  if (capturedPiece.type === "general") {
+    return true;
+  }
+
+  return staticExchangeScore(state, action, kingdom, profile) >= profitableCaptureMargin;
+}
+
+function addressesHangingPiece(state: GameState, action: AiMove, kingdom: Kingdom, profile: AiProfile): boolean {
+  const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+  const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+  if (!movingPiece) {
+    return false;
+  }
+
+  if (isPieceHanging(state, movingPiece, profile)) {
+    const nextState = applySearchMove(state, action.pieceId, action.target);
+    const movedPiece = nextState.pieces.find((piece) => piece.id === action.pieceId);
+
+    return Boolean(movedPiece && !isPieceHanging(nextState, movedPiece, profile));
+  }
+
+  if (!capturedPiece || isNeutralBlocker(capturedPiece)) {
+    return false;
+  }
+
+  return state.pieces.some((piece) => {
+    return (
+      piece.controller === kingdom &&
+      piece.blocksMovement &&
+      pieceValue(piece, profile) >= profile.pieceValues.horse &&
+      getLegalMoves(state, capturedPiece).includes(piece.position)
+    );
+  });
+}
+
+function staticExchangeScore(state: GameState, action: AiMove, kingdom: Kingdom, profile: AiProfile): number {
+  const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+  const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+  if (!movingPiece || !capturedPiece || isNeutralBlocker(capturedPiece)) {
+    return 0;
+  }
+
+  if (capturedPiece.type === "general") {
+    return profile.scoring.generalCaptureBonus;
+  }
+
+  const capturedValue = pieceValue(capturedPiece, profile);
+  const movingValue = pieceValue(movingPiece, profile);
+  const nextState = applySearchMove(state, action.pieceId, action.target);
+  const attackers = attackersOf(nextState, action.target, kingdom);
+
+  if (!attackers.length) {
+    return capturedValue;
+  }
+
+  const defenders = defendersOf(nextState, action.target, kingdom, movingPiece.id);
+  const recaptureCost = Math.min(movingValue, cheapestPieceValue(attackers, profile));
+  const defenderCompensation = defenders.length ? Math.min(movingValue * 0.45, cheapestPieceValue(defenders, profile) * 0.35) : 0;
+
+  return capturedValue - recaptureCost + defenderCompensation;
+}
+
+function isPieceHanging(state: GameState, piece: Piece, profile: AiProfile): boolean {
+  if (!piece.blocksMovement || isNeutralBlocker(piece)) {
+    return false;
+  }
+
+  const attackers = attackersOf(state, piece.position, piece.controller);
+
+  if (!attackers.length) {
+    return false;
+  }
+
+  const defenders = defendersOf(state, piece.position, piece.controller, piece.id);
+  const value = pieceValue(piece, profile);
+
+  return defenders.length === 0 || cheapestPieceValue(attackers, profile) <= value - hangingPieceMargin;
+}
+
+function attackersOf(state: GameState, point: PointId, ownKingdom: Kingdom): Piece[] {
+  return state.pieces.filter((piece) => {
+    return piece.controller !== ownKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getLegalMoves(state, piece).includes(point);
+  });
+}
+
+function defendersOf(state: GameState, point: PointId, ownKingdom: Kingdom, excludedPieceId?: string): Piece[] {
+  return state.pieces.filter((piece) => {
+    return (
+      piece.controller === ownKingdom &&
+      piece.id !== excludedPieceId &&
+      piece.blocksMovement &&
+      !isNeutralBlocker(piece) &&
+      getLegalMoves(state, piece).includes(point)
+    );
+  });
+}
+
+function cheapestPieceValue(pieces: Piece[], profile: AiProfile): number {
+  return Math.min(...pieces.map((piece) => pieceValue(piece, profile)));
+}
+
+function mobilityDeltaScore(state: GameState, action: AiMove, movingPiece: Piece, profile: AiProfile): number {
+  if (movingPiece.type !== "horse" && movingPiece.type !== "cannon" && movingPiece.type !== "chariot") {
+    return 0;
+  }
+
+  const before = getLegalMoves(state, movingPiece).length;
+  const nextState = applySearchMove(state, action.pieceId, action.target);
+  const movedPiece = nextState.pieces.find((piece) => piece.id === action.pieceId);
+
+  return movedPiece ? getLegalMoves(nextState, movedPiece).length - before : 0;
+}
+
+function positionRepetitionScore(state: GameState, kingdom: Kingdom): number {
+  const ownHistory = (state.moveHistory ?? []).filter((move) => move.kingdom === kingdom).slice(-10);
+
+  if (ownHistory.length < 4) {
+    return 0;
+  }
+
+  let penalty = 0;
+
+  for (let index = 1; index < ownHistory.length; index += 1) {
+    const previous = ownHistory[index - 1];
+    const current = ownHistory[index];
+
+    if (previous.pieceId === current.pieceId && previous.from === current.target && previous.target === current.from) {
+      penalty += 420;
+    }
+  }
+
+  return penalty;
 }
 
 function forcingOpportunityScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): number {
@@ -1040,7 +1714,7 @@ function uniqueActions(actions: AiMove[]): AiMove[] {
   const seen = new Set<string>();
 
   return actions.filter((action) => {
-    const key = `${action.pieceId}:${action.target}`;
+    const key = actionKey(action);
 
     if (seen.has(key)) {
       return false;
@@ -1049,6 +1723,24 @@ function uniqueActions(actions: AiMove[]): AiMove[] {
     seen.add(key);
     return true;
   });
+}
+
+function sameMove(left: AiMove, right: AiMove): boolean {
+  return left.pieceId === right.pieceId && left.target === right.target;
+}
+
+function actionKey(action: AiMove): string {
+  return `${action.pieceId}:${action.target}`;
+}
+
+function searchStateKey(state: GameState): string {
+  const pieces = state.pieces
+    .filter((piece) => piece.blocksMovement)
+    .map((piece) => `${piece.id}:${piece.position}:${piece.controller}:${piece.defeated ? 1 : 0}`)
+    .sort()
+    .join("|");
+
+  return `${state.currentKingdom}:${state.winner ?? "none"}:${state.defeatedKingdoms.join(",")}|${pieces}`;
 }
 
 function compareAction(left: AiMove, right: AiMove): number {
