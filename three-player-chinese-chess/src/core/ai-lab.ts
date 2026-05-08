@@ -29,6 +29,9 @@ export interface AiBenchmarkReport {
     hangingPieceMisses: number;
     repeatedQuietMoves: number;
     averageThinkMs: number;
+    endgameNaturalWins: number;
+    endgameBlunders: number;
+    missedKillMoves: number;
   };
 }
 
@@ -86,7 +89,10 @@ export function runAiBenchmark(profile: AiProfile = defaultAiProfile, options: A
     selfPlay.profitableCaptureMisses * 180 -
     selfPlay.hangingPieceMisses * 140 -
     selfPlay.repeatedQuietMoves * 110 -
-    selfPlay.averageThinkMs * 0.08;
+    selfPlay.averageThinkMs * 0.08 +
+    selfPlay.endgameNaturalWins * 220 -
+    selfPlay.endgameBlunders * 180 -
+    selfPlay.missedKillMoves * 320;
 
   return {
     score: Math.round(scenarioScore + selfPlayScore),
@@ -196,6 +202,7 @@ function runSelfPlayBenchmark(profile: AiProfile, options: AiBenchmarkOptions): 
   for (const game of games) {
     winners[game.winner ?? "none"] += 1;
   }
+  const endgame = runEndgameBenchmark(profile, options);
 
   return {
     games: games.length,
@@ -211,6 +218,9 @@ function runSelfPlayBenchmark(profile: AiProfile, options: AiBenchmarkOptions): 
     hangingPieceMisses: games.reduce((sum, game) => sum + game.hangingPieceMisses, 0),
     repeatedQuietMoves: games.reduce((sum, game) => sum + game.repeatedQuietMoves, 0),
     averageThinkMs: Math.round(games.reduce((sum, game) => sum + game.thinkMs, 0) / Math.max(1, games.reduce((sum, game) => sum + game.aiMoves, 0))),
+    endgameNaturalWins: endgame.naturalWins,
+    endgameBlunders: endgame.blunders,
+    missedKillMoves: endgame.missedKillMoves,
   };
 }
 
@@ -297,7 +307,12 @@ function playSelfPlayGame(
       profitableCaptureMisses += 1;
     }
 
-    if (tacticalBaseline.hangingPieceId && move.pieceId !== tacticalBaseline.hangingPieceId && !capturesThreateningPiece(state, move, tacticalBaseline.hangingPieceId)) {
+    if (
+      plies >= 12 &&
+      tacticalBaseline.hangingPieceId &&
+      move.pieceId !== tacticalBaseline.hangingPieceId &&
+      !capturesThreateningPiece(state, move, tacticalBaseline.hangingPieceId)
+    ) {
       hangingPieceMisses += 1;
     }
 
@@ -367,7 +382,7 @@ function tacticalBaselineFor(
   const hangingPiece = state.pieces
     .filter((piece) => piece.controller === kingdom && piece.blocksMovement && !piece.defeated)
     .filter((piece) => piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse")
-    .find((piece) => isAttackedByOpponent(state, piece, kingdom));
+    .find((piece) => isSeriouslyHanging(state, piece, kingdom, profile));
 
   return {
     hasProfitableCapture,
@@ -389,14 +404,157 @@ function reversesRecentOwnQuietMove(state: GameState, move: AiMove): boolean {
   return Boolean(lastOwnMove && lastOwnMove.pieceId === move.pieceId && lastOwnMove.from === move.target && lastOwnMove.target === move.from);
 }
 
-function isAttackedByOpponent(state: GameState, piece: Piece, kingdom: Kingdom): boolean {
-  return state.pieces.some((candidate) => {
+function isSeriouslyHanging(state: GameState, piece: Piece, kingdom: Kingdom, profile: AiProfile): boolean {
+  const attackers = state.pieces.filter((candidate) => {
     return candidate.controller !== kingdom && candidate.blocksMovement && !candidate.defeated && getLegalMoves(state, candidate).includes(piece.position);
   });
+
+  if (!attackers.length) {
+    return false;
+  }
+
+  const defenders = state.pieces.filter((candidate) => {
+    return candidate.controller === kingdom && candidate.id !== piece.id && candidate.blocksMovement && !candidate.defeated && getLegalMoves(state, candidate).includes(piece.position);
+  });
+
+  return defenders.length === 0 || Math.min(...attackers.map((attacker) => localPieceValue(attacker, profile))) < localPieceValue(piece, profile) - 220;
 }
 
 function localPieceValue(piece: Piece, profile: AiProfile): number {
   return profile.pieceValues[piece.type];
+}
+
+function runEndgameBenchmark(
+  profile: AiProfile,
+  options: AiBenchmarkOptions,
+): {
+  naturalWins: number;
+  blunders: number;
+  missedKillMoves: number;
+} {
+  let naturalWins = 0;
+  let blunders = 0;
+  let missedKillMoves = 0;
+
+  for (const [index, startState] of endgameSeeds().entries()) {
+    let state = startState;
+
+    for (let ply = 0; !state.winner && ply < Math.min(10, options.maxPlies ?? 10); ply += 1) {
+      const baseline = tacticalBaselineFor(state, state.currentKingdom, profile);
+      const killMoves = directGeneralCaptureMoves(state, state.currentKingdom);
+      const move = chooseAiMove(state, state.currentKingdom, profile, {
+        style: aiStyleForKingdom(state.currentKingdom),
+        seed: (options.seed ?? 20260507) + index * 997 + ply * 37,
+        timeBudgetMs: 80,
+        maxDepth: 2,
+        openingSearchDepth: 0,
+        maxQuiescenceDepth: 2,
+        skillProfile: "tactical",
+      });
+
+      if (!move) {
+        blunders += 1;
+        break;
+      }
+
+      const capturedPiece = capturedPieceAt(state, move.pieceId, move.target);
+
+      if (killMoves.length && !killMoves.some((item) => item.pieceId === move.pieceId && item.target === move.target)) {
+        missedKillMoves += 1;
+      }
+
+      if (baseline.hangingPieceId && move.pieceId !== baseline.hangingPieceId && !capturesThreateningPiece(state, move, baseline.hangingPieceId)) {
+        blunders += 1;
+      }
+
+      if (baseline.hasProfitableCapture && !capturedPiece) {
+        blunders += 1;
+      }
+
+      state = applyMove(state, move.pieceId, move.target);
+    }
+
+    if (state.winner) {
+      naturalWins += 1;
+    }
+  }
+
+  return { naturalWins, blunders, missedKillMoves };
+}
+
+function directGeneralCaptureMoves(state: GameState, kingdom: Kingdom): AiMove[] {
+  return state.pieces
+    .filter((piece) => piece.controller === kingdom && piece.blocksMovement && !piece.defeated)
+    .flatMap((piece) => {
+      return getLegalMoves(state, piece).flatMap((target) => {
+        const capturedPiece = capturedPieceAt(state, piece.id, target);
+
+        return capturedPiece?.type === "general" ? [{ pieceId: piece.id, from: piece.position, target }] : [];
+      });
+    });
+}
+
+function endgameSeeds(): GameState[] {
+  return [
+    labState(
+      [
+        labPiece("wei-general", "general", "魏", "E5", "wei"),
+        labPiece("wei-chariot", "chariot", "车", "A5", "wei"),
+        labPiece("wu-general", "general", "吴", "F5", "wu"),
+      ],
+      "wei",
+      ["shu"],
+    ),
+    labState(
+      [
+        labPiece("wu-general", "general", "吴", "J5", "wu"),
+        labPiece("wu-chariot", "chariot", "车", "F5", "wu"),
+        labPiece("wei-chariot", "chariot", "车", "F6", "wei"),
+        labPiece("wei-general", "general", "魏", "E4", "wei"),
+        labPiece("shu-general", "general", "蜀", "O4", "shu"),
+      ],
+      "wu",
+    ),
+    labState(
+      [
+        labPiece("shu-general", "general", "蜀", "O5", "shu"),
+        labPiece("shu-chariot", "chariot", "车", "K5", "shu"),
+        labPiece("wei-general", "general", "魏", "A5", "wei"),
+        labPiece("wu-general", "general", "吴", "J4", "wu"),
+        labPiece("wu-horse", "horse", "马", "F6", "wu"),
+      ],
+      "shu",
+    ),
+  ];
+}
+
+function labState(pieces: Piece[], currentKingdom: Kingdom, defeatedKingdoms: Kingdom[] = []): GameState {
+  return {
+    pieces,
+    selectedPieceId: null,
+    legalMoves: [],
+    currentKingdom,
+    checkedKingdoms: [],
+    winner: null,
+    lastMoveMessage: null,
+    defeatedKingdoms,
+    options: { defeatedPieceMode: "remove", defeatCondition: "capture" },
+    moveHistory: [],
+  };
+}
+
+function labPiece(id: string, type: Piece["type"], label: string, position: Piece["position"], kingdom: Kingdom): Piece {
+  return {
+    id,
+    type,
+    label,
+    position,
+    kingdom,
+    controller: kingdom,
+    color: kingdom === "wei" ? "red" : kingdom === "wu" ? "blue" : "green",
+    defeated: false,
+    blocksMovement: true,
+  };
 }
 
 function openingSeeds(): Array<Array<{ pieceId: string; target: string }>> {

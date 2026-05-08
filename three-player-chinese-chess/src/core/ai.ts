@@ -50,6 +50,9 @@ const minimumSearchBudgetMs = 12;
 const defaultSearchBudgetMs = 80;
 const profitableCaptureMargin = 120;
 const hangingPieceMargin = 220;
+type GamePhase = "opening" | "middlegame" | "endgame";
+const allRows = Object.values(kingdomRows).flat();
+const rowIndexByLabel = new Map<string, number>(allRows.map((row, index) => [row, index]));
 
 interface SearchContext {
   deadline: number;
@@ -90,13 +93,14 @@ export function chooseAiMove(
   const moveOptions = options.random || options.seed === undefined ? options : { ...options, random: seededRandom(options.seed) };
   const style = options.style ?? aiStyleForKingdom(kingdom);
   const context = createSearchContext(moveOptions);
+  const phase = gamePhaseFor(state);
   const fastOpening =
-    isOpeningPhase(state) &&
+    phase === "opening" &&
     moveOptions.timeBudgetMs === undefined &&
     moveOptions.openingSearchDepth === undefined &&
     (moveOptions.explorationRate ?? 0) <= 0 &&
     !state.checkedKingdoms.includes(kingdom);
-  const lowBudget = (moveOptions.timeBudgetMs ?? Number.POSITIVE_INFINITY) <= 150 && !state.checkedKingdoms.includes(kingdom);
+  const lowBudget = phase === "opening" && (moveOptions.timeBudgetMs ?? Number.POSITIVE_INFINITY) <= 150 && !state.checkedKingdoms.includes(kingdom);
   const fastCandidates = fastOpening || lowBudget;
   const actions = fastCandidates ? getFastOpeningCandidateActions(state, kingdom, profile, style) : getCandidateActions(state, kingdom, profile, style, context);
 
@@ -130,6 +134,22 @@ export function chooseAiMove(
 
   if (profitableCapture && staticExchangeScore(state, profitableCapture, kingdom, profile) >= profile.pieceValues.horse * 0.5) {
     return profitableCapture;
+  }
+
+  const urgentHangingDefense = (moveOptions.explorationRate ?? 0) > 0 ? null : actions
+    .filter((action) => {
+      const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+
+      return (
+        Boolean(movingPiece && pieceValue(movingPiece, profile) >= profile.pieceValues.horse) &&
+        addressesHangingPiece(state, action, kingdom, profile) &&
+        doesNotLeaveKingdomInCheck(state, action, kingdom)
+      );
+    })
+    .sort((left, right) => actionOrderingScore(state, right, kingdom, profile, style, context) - actionOrderingScore(state, left, kingdom, profile, style, context))[0];
+
+  if (urgentHangingDefense) {
+    return urgentHangingDefense;
   }
 
   const targetDepth = lowBudget ? Math.min(1, searchDepthForState(state, profile, moveOptions)) : searchDepthForState(state, profile, moveOptions);
@@ -199,8 +219,13 @@ export function chooseAiMove(
 
 function searchDepthForState(state: GameState, profile: AiProfile, options: AiMoveOptions): number {
   const profileDepth = Math.min(profile.searchDepth, options.maxDepth ?? profile.searchDepth);
+  const phase = gamePhaseFor(state);
 
-  if (!isOpeningPhase(state)) {
+  if (phase === "endgame") {
+    return Math.min((options.maxDepth ?? profile.searchDepth) + 1, profileDepth + 1);
+  }
+
+  if (phase !== "opening") {
     return profileDepth;
   }
 
@@ -208,7 +233,13 @@ function searchDepthForState(state: GameState, profile: AiProfile, options: AiMo
 }
 
 function rootBeamForState(state: GameState, profile: AiProfile, options: AiMoveOptions, depth: number): number {
-  if (!isOpeningPhase(state) || depth <= 0) {
+  const phase = gamePhaseFor(state);
+
+  if (phase === "endgame") {
+    return Math.min(getAllActions(state, state.currentKingdom).length || profile.rootBeam, profile.rootBeam + 6);
+  }
+
+  if (phase !== "opening" || depth <= 0) {
     return profile.rootBeam;
   }
 
@@ -216,7 +247,18 @@ function rootBeamForState(state: GameState, profile: AiProfile, options: AiMoveO
 }
 
 function searchProfileForState(state: GameState, profile: AiProfile, options: AiMoveOptions, depth: number): AiProfile {
-  if (!isOpeningPhase(state) || depth <= 0) {
+  const phase = gamePhaseFor(state);
+
+  if (phase === "endgame") {
+    return {
+      ...profile,
+      responseBeam: Math.min(profile.responseBeam + 2, profile.rootBeam),
+      thirdPlayerBeam: Math.min(profile.thirdPlayerBeam + 1, profile.responseBeam),
+      safetyScanLimit: Math.max(profile.safetyScanLimit, 24),
+    };
+  }
+
+  if (phase !== "opening" || depth <= 0) {
     return profile;
   }
 
@@ -409,6 +451,7 @@ function getCandidateActions(
     return scoreDiff || compareAction(left, right);
   });
   const inCheck = state.checkedKingdoms.includes(kingdom);
+  const phase = gamePhaseFor(state);
   const highPriorityActions = actions.filter((action) => {
     const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
 
@@ -417,10 +460,12 @@ function getCandidateActions(
       isKingDefenseCapture(state, action, kingdom) ||
       givesDirectCheck(state, action, kingdom) ||
       isProfitableCapture(state, action, kingdom, profile) ||
-      addressesHangingPiece(state, action, kingdom, profile)
+      addressesHangingPiece(state, action, kingdom, profile) ||
+      (phase === "endgame" && isEndgameForcingAction(state, action, kingdom, profile))
     );
   });
-  const scanActions = inCheck ? actions : uniqueActions([...highPriorityActions, ...actions.slice(0, profile.safetyScanLimit)]);
+  const scanLimit = phase === "endgame" ? Math.max(profile.safetyScanLimit, 28) : profile.safetyScanLimit;
+  const scanActions = inCheck ? actions : uniqueActions([...highPriorityActions, ...actions.slice(0, scanLimit)]);
   const safeActions = scanActions.filter((action) => doesNotLeaveKingdomInCheck(state, action, kingdom));
   const candidates = safeActions.length ? safeActions : scanActions;
 
@@ -494,7 +539,11 @@ function rootActionWindow(
   limit: number,
 ): AiMove[] {
   const forced = actions.filter((action) => {
-    return isProfitableCapture(state, action, kingdom, profile) || addressesHangingPiece(state, action, kingdom, profile);
+    return (
+      isProfitableCapture(state, action, kingdom, profile) ||
+      addressesHangingPiece(state, action, kingdom, profile) ||
+      (gamePhaseFor(state) === "endgame" && isEndgameForcingAction(state, action, kingdom, profile))
+    );
   });
 
   return uniqueActions([...forced, ...actions]).slice(0, Math.max(limit, Math.min(actions.length, forced.length + 4))).sort((left, right) => {
@@ -567,6 +616,10 @@ function actionOrderingScore(
 
   if (addressesHangingPiece(state, action, kingdom, profile)) {
     score += 14_000 + Math.max(0, threatenedPieceReliefScore(state, action, movingPiece, capturedPiece, kingdom, profile, style));
+  }
+
+  if (gamePhaseFor(state) === "endgame") {
+    score += endgameActionScore(state, action, kingdom, profile, style);
   }
 
   score += Math.max(0, 16 - ply) * 5;
@@ -765,6 +818,7 @@ function quiescenceSearch(
 
   const currentKingdom = state.currentKingdom;
   const currentStyle = currentKingdom === aiKingdom ? aiStyle : aiStyleForKingdom(currentKingdom);
+  const phase = gamePhaseFor(state);
   const tacticalActions = getCandidateActions(state, currentKingdom, profile, currentStyle, context)
     .filter((action) => {
       const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
@@ -776,7 +830,7 @@ function quiescenceSearch(
         addressesHangingPiece(state, action, currentKingdom, profile)
       );
     })
-    .slice(0, currentKingdom === aiKingdom ? 8 : 5);
+    .slice(0, phase === "endgame" ? (currentKingdom === aiKingdom ? 12 : 8) : currentKingdom === aiKingdom ? 8 : 5);
 
   if (!tacticalActions.length) {
     return standPat;
@@ -866,6 +920,7 @@ function evaluateState(state: GameState, aiKingdom: Kingdom, profile: AiProfile,
   score += kingSafetyScore(state, aiKingdom, profile) * style.safetyMultiplier;
   score += pieceSafetyScore(state, aiKingdom, profile, style);
   score += threePlayerBalanceScore(material, aiKingdom, profile) * style.balanceMultiplier;
+  score += endgameGoalScore(state, aiKingdom, material, profile, style);
   score -= positionRepetitionScore(state, aiKingdom);
 
   return score;
@@ -1078,7 +1133,23 @@ function isPointControlledByOpponent(state: GameState, point: PointId, kingdom: 
 }
 
 function isOpeningPhase(state: GameState): boolean {
-  return state.pieces.filter((piece) => piece.blocksMovement && !piece.defeated).length >= 42;
+  return gamePhaseFor(state) === "opening";
+}
+
+function gamePhaseFor(state: GameState): GamePhase {
+  const activePieces = state.pieces.filter((piece) => piece.blocksMovement && !isNeutralBlocker(piece));
+  const activeMajorPieces = activePieces.filter((piece) => piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse");
+  const activeKingdoms = (Object.keys(kingdomRows) as Kingdom[]).filter((kingdom) => !state.defeatedKingdoms.includes(kingdom));
+
+  if (state.defeatedKingdoms.length > 0 || activeKingdoms.length <= 2 || activePieces.length <= 24 || activeMajorPieces.length <= 9) {
+    return "endgame";
+  }
+
+  if (activePieces.length >= 42) {
+    return "opening";
+  }
+
+  return "middlegame";
 }
 
 function isOriginalBackRank(piece: Piece): boolean {
@@ -1446,6 +1517,7 @@ function threatenedPieceReliefScore(
 
 function pieceSafetyScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): number {
   let score = 0;
+  const phase = gamePhaseFor(state);
 
   for (const piece of state.pieces) {
     if (!piece.blocksMovement || isNeutralBlocker(piece)) {
@@ -1461,7 +1533,7 @@ function pieceSafetyScore(state: GameState, aiKingdom: Kingdom, profile: AiProfi
     const value = pieceValue(piece, profile);
     const defenders = defendersOf(state, piece.position, piece.controller, piece.id);
     const hanging = defenders.length === 0 || cheapestPieceValue(attackers, profile) < value - hangingPieceMargin;
-    const pressure = hanging ? value * 0.78 : value * 0.22;
+    const pressure = (hanging ? value * 0.78 : value * 0.22) * (phase === "endgame" ? 1.45 : 1);
 
     if (piece.controller === aiKingdom) {
       score -= pressure / style.riskTolerance;
@@ -1471,6 +1543,148 @@ function pieceSafetyScore(state: GameState, aiKingdom: Kingdom, profile: AiProfi
   }
 
   return score;
+}
+
+function endgameGoalScore(
+  state: GameState,
+  aiKingdom: Kingdom,
+  material: Record<Kingdom, number>,
+  profile: AiProfile,
+  style: AiStyleProfile,
+): number {
+  if (gamePhaseFor(state) !== "endgame") {
+    return 0;
+  }
+
+  const ownGeneral = generalFor(state, aiKingdom);
+  const opponents = (Object.keys(kingdomRows) as Kingdom[]).filter((kingdom) => kingdom !== aiKingdom && !state.defeatedKingdoms.includes(kingdom));
+  const strongest = opponents.sort((left, right) => material[right] - material[left])[0];
+  const materialLead = material[aiKingdom] - Math.max(0, ...opponents.map((kingdom) => material[kingdom]));
+  let score = materialLead * 0.18;
+
+  if (ownGeneral) {
+    score += kingSafetyScore(state, aiKingdom, profile) * 0.18 * style.safetyMultiplier;
+  }
+
+  for (const opponent of opponents) {
+    const general = generalFor(state, opponent);
+
+    if (!general) {
+      score += 18_000;
+      continue;
+    }
+
+    const directAttackers = state.pieces.filter((piece) => {
+      return piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getLegalMoves(state, piece).includes(general.position);
+    });
+    const pressureTargets = state.pieces.reduce((total, piece) => {
+      return piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece)
+        ? total + getLegalMoves(state, piece).filter((target) => isInsideOwnPalace(opponent, target)).length
+        : total;
+    }, 0);
+
+    score += directAttackers.length * 9_000 * style.attackMultiplier;
+    score += pressureTargets * 520 * style.attackMultiplier;
+
+    if (strongest === opponent) {
+      score += pressureTargets * 260 * style.targetStrongestBonus;
+    }
+  }
+
+  const ownSoldierPush = state.pieces
+    .filter((piece) => piece.controller === aiKingdom && piece.type === "soldier" && piece.blocksMovement && !isNeutralBlocker(piece))
+    .reduce((total, piece) => total + soldierAdvance(piece), 0);
+  score += ownSoldierPush * 95;
+
+  if (materialLead > 900) {
+    score += simplifiedEndgameBonus(state, aiKingdom, profile) * 0.18;
+  } else if (materialLead < -700) {
+    score += state.checkedKingdoms.filter((kingdom) => kingdom !== aiKingdom).length * 4_800;
+  }
+
+  return score;
+}
+
+function simplifiedEndgameBonus(state: GameState, aiKingdom: Kingdom, profile: AiProfile): number {
+  return state.pieces.reduce((total, piece) => {
+    if (!piece.blocksMovement || isNeutralBlocker(piece) || piece.type === "general") {
+      return total;
+    }
+
+    const value = pieceValue(piece, profile);
+
+    return total + (piece.controller === aiKingdom ? value * 0.12 : -value * 0.28);
+  }, 0);
+}
+
+function endgameActionScore(state: GameState, action: AiMove, kingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): number {
+  const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+  const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+  const material = materialByController(state, profile);
+  const opponents = (Object.keys(kingdomRows) as Kingdom[]).filter((item) => item !== kingdom && !state.defeatedKingdoms.includes(item));
+  const strongest = opponents.sort((left, right) => material[right] - material[left])[0];
+  let score = 0;
+
+  if (!movingPiece) {
+    return score;
+  }
+
+  if (capturedPiece && !isNeutralBlocker(capturedPiece)) {
+    score += pieceValue(capturedPiece, profile) * (capturedPiece.controller === strongest ? 1.1 : 0.75);
+  }
+
+  if (givesDirectCheck(state, action, kingdom)) {
+    score += 5_500 * style.attackMultiplier;
+  }
+
+  const nextState = applySearchMove(state, action.pieceId, action.target);
+  const currentDistance = nearestOpponentGeneralDistance(state, movingPiece.position, kingdom);
+  const nextDistance = nearestOpponentGeneralDistance(nextState, action.target, kingdom);
+
+  if (nextDistance < currentDistance) {
+    score += (currentDistance - nextDistance) * 420 * style.attackMultiplier;
+  }
+
+  if (movingPiece.type === "soldier") {
+    score += soldierAdvance({ ...movingPiece, position: action.target }) * 160;
+  }
+
+  if (addressesHangingPiece(state, action, kingdom, profile)) {
+    score += pieceValue(movingPiece, profile) * 0.8 * style.safetyMultiplier;
+  }
+
+  return score;
+}
+
+function isEndgameForcingAction(state: GameState, action: AiMove, kingdom: Kingdom, profile: AiProfile): boolean {
+  const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+
+  return (
+    Boolean(capturedPiece && !isNeutralBlocker(capturedPiece)) ||
+    givesDirectCheck(state, action, kingdom) ||
+    addressesHangingPiece(state, action, kingdom, profile)
+  );
+}
+
+function nearestOpponentGeneralDistance(state: GameState, point: PointId, kingdom: Kingdom): number {
+  const { row, col } = parsePointId(point);
+  const rowIndex = rowIndexByLabel.get(row) ?? 0;
+  const distances = (Object.keys(kingdomRows) as Kingdom[])
+    .filter((opponent) => opponent !== kingdom && !state.defeatedKingdoms.includes(opponent))
+    .map((opponent) => generalFor(state, opponent))
+    .filter(Boolean)
+    .map((general) => {
+      const target = parsePointId(general!.position);
+      const targetRowIndex = rowIndexByLabel.get(target.row) ?? rowIndex;
+
+      return Math.abs(targetRowIndex - rowIndex) + Math.abs(target.col - col);
+    });
+
+  return Math.min(99, ...distances);
+}
+
+function generalFor(state: GameState, kingdom: Kingdom): Piece | null {
+  return state.pieces.find((piece) => piece.kingdom === kingdom && piece.type === "general" && piece.blocksMovement) ?? null;
 }
 
 function isProfitableCapture(state: GameState, action: AiMove, kingdom: Kingdom, profile: AiProfile): boolean {

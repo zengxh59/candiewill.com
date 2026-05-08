@@ -296,15 +296,6 @@ function getSoldierMoves(piece: Piece): PointId[] {
     moves.push(...getSoldierCrossings(piece));
   }
 
-  if (localRowIndex === 0) {
-    if (col > 1) {
-      moves.push(pointId(row, col - 1));
-    }
-    if (col < 9) {
-      moves.push(pointId(row, col + 1));
-    }
-  }
-
   return [...new Set(moves)];
 }
 

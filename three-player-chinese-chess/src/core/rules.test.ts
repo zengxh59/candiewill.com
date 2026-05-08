@@ -21,6 +21,13 @@ describe("turns, checks, and wins", () => {
     expect(() => applyMove(state, "shu-soldier-5", "K5")).toThrow("not shu's turn");
   });
 
+  it("rejects soldier sideways movement before crossing a boundary river", () => {
+    const state = applyMove(createInitialGameState(), "wei-soldier-5", "A5");
+
+    expect(() => applyMove({ ...state, currentKingdom: "wei" }, "wei-soldier-5", "A4")).toThrow("Illegal move");
+    expect(() => applyMove({ ...state, currentKingdom: "wei" }, "wei-soldier-5", "A6")).toThrow("Illegal move");
+  });
+
   it("captures a non-general piece and advances the turn", () => {
     const state = stateWith([
       piece("wei-chariot", "chariot", "车", "A5", "wei"),

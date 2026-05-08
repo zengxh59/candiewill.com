@@ -61,7 +61,13 @@ describe("wei initial pieces and moves", () => {
   it("lets soldiers cross boundary rivers directly from the center row", () => {
     const state = onePieceState(piece("soldier", "soldier", "兵", "A5"));
 
-    expect(getLegalMoves(state, state.pieces[0]).sort()).toEqual(["A4", "A6", "F5", "K5"]);
+    expect(getLegalMoves(state, state.pieces[0]).sort()).toEqual(["F5", "K5"]);
+  });
+
+  it("lets soldiers move sideways only after crossing a boundary river", () => {
+    const state = onePieceState(piece("soldier", "soldier", "兵", "F5"));
+
+    expect(getLegalMoves(state, state.pieces[0]).sort()).toEqual(["F6", "G5"]);
   });
 
   it("lets chariots continue through cross-kingdom files", () => {

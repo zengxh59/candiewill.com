@@ -179,6 +179,57 @@ export const aiScenarios: AiScenario[] = [
       ["wu"],
     ),
   },
+  {
+    id: "endgame-kill-general",
+    title: "残局有机会吃主公时应立即收束",
+    kingdom: "wei",
+    expected: { pieceId: "wei-chariot", target: "F5" },
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-chariot", "chariot", "车", "A5", "wei"),
+        piece("wu-general", "general", "吴", "F5", "wu"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ],
+      "wei",
+    ),
+  },
+  {
+    id: "endgame-answer-major-threat",
+    title: "残局大子被攻击时仍要优先处理",
+    kingdom: "wu",
+    expected: { pieceId: "wu-chariot", target: "F6" },
+    mustAddressThreatenedPiece: true,
+    state: stateWith(
+      [
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wu-chariot", "chariot", "车", "F5", "wu"),
+        piece("wei-chariot", "chariot", "车", "F6", "wei"),
+        piece("wei-general", "general", "魏", "E4", "wei"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ],
+      "wu",
+    ),
+  },
+  {
+    id: "endgame-soldier-push",
+    title: "残局兵卒应向敌方主公推进而不是闲走",
+    kingdom: "wei",
+    expectedAny: [
+      { pieceId: "wei-soldier", target: "G5" },
+      { pieceId: "wei-soldier", target: "F6" },
+    ],
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-soldier", "soldier", "兵", "F5", "wei"),
+        piece("wei-chariot", "chariot", "车", "A5", "wei"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ],
+      "wei",
+    ),
+  },
 ];
 
 function stateWith(pieces: Piece[], currentKingdom: GameState["currentKingdom"], checkedKingdoms: GameState["checkedKingdoms"] = []): GameState {
