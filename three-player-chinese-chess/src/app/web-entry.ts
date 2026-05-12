@@ -372,7 +372,7 @@ function startOnlineRoom(settings: StartSettings): void {
 
   currentGameMode = "online";
   onlineRoomOutput!.textContent = roomCode ? `正在进入房间 ${roomCode}...` : "正在创建房间...";
-  connectOnlineSocket();
+  connectOnlineSocket(roomCode ? `/join/${roomCode}` : "/create");
 
   if (roomCode) {
     sendOnlineMessage({
@@ -762,14 +762,14 @@ function isAiTurn(): boolean {
   return currentGameMode === "ai" && state.currentKingdom !== humanKingdom;
 }
 
-function connectOnlineSocket(): void {
+function connectOnlineSocket(pathSuffix = ""): void {
   if (onlineSocket && (onlineSocket.readyState === WebSocket.OPEN || onlineSocket.readyState === WebSocket.CONNECTING)) {
     return;
   }
 
   onlineConnectionState = "connecting";
   syncOnlineControls();
-  onlineSocket = new WebSocket(onlineWebSocketUrl());
+  onlineSocket = new WebSocket(onlineWebSocketUrl(pathSuffix));
 
   onlineSocket.addEventListener("open", () => {
     onlineConnectionState = "connected";
@@ -1044,17 +1044,17 @@ function getOnlinePlayerId(): string {
   return playerId;
 }
 
-function onlineWebSocketUrl(): string {
+function onlineWebSocketUrl(pathSuffix = ""): string {
   const configuredUrl = import.meta.env.VITE_ONLINE_WS_URL as string | undefined;
 
   if (configuredUrl) {
-    return configuredUrl;
+    return configuredUrl + pathSuffix;
   }
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const devPort = window.location.port === "5173" ? "4173" : window.location.port;
 
-  return `${protocol}//${window.location.hostname}${devPort ? `:${devPort}` : ""}/ws`;
+  return `${protocol}//${window.location.hostname}${devPort ? `:${devPort}` : ""}/ws${pathSuffix}`;
 }
 
 function startLearningSession(): void {
