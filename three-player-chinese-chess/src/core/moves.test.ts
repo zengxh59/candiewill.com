@@ -100,6 +100,64 @@ describe("wei initial pieces and moves", () => {
     expect(getLegalMoves(state, state.pieces[0]).sort()).toEqual(["B3", "B7", "C4", "C6", "F7", "G6", "K3", "L4"]);
   });
 
+  it("lets horses at a boundary river jump into adjacent kingdoms", () => {
+    const state = onePieceState(piece("horse", "horse", "马", "A5"));
+
+    expect(getLegalMoves(state, state.pieces[0]).sort()).toEqual(["B3", "B7", "C4", "C6", "F7", "G6", "K3", "L4"]);
+  });
+
+  it("lets a horse deep in foreign territory use local and cross-zone moves", () => {
+    // Wei horse at K5 (Shu territory, Wu-Shu boundary) — should reach F3/G4 via Wu-Shu cross-zone
+    // and L7/M6 via local Shu rows
+    const state: GameState = {
+      currentKingdom: "wei",
+      selectedPieceId: null,
+      legalMoves: [],
+      checkedKingdoms: [],
+      winner: null,
+      lastMoveMessage: null,
+      defeatedKingdoms: [],
+      options: { defeatedPieceMode: "remove", defeatCondition: "capture" },
+      pieces: [
+        piece("wei-horse", "horse", "马", "K5", "wei"),
+        piece("wei-general", "general", "魏", "E1", "wei"),
+        piece("wu-general", "general", "吴", "J4", "wu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+    };
+    const horse = state.pieces.find((p) => p.id === "wei-horse")!;
+    const moves = getLegalMoves(state, horse);
+
+    expect(moves).toContain("F3");
+    expect(moves).toContain("G4");
+    expect(moves).toContain("L7");
+    expect(moves).toContain("M6");
+  });
+
+  it("blocks horse moves that expose the general to flying general", () => {
+    // Wei horse at K5, Wei general at E5, Shu general at O5 — all on column 5.
+    // Horse blocks the flying general line, so every horse move is illegal.
+    const state: GameState = {
+      currentKingdom: "wei",
+      selectedPieceId: null,
+      legalMoves: [],
+      checkedKingdoms: [],
+      winner: null,
+      lastMoveMessage: null,
+      defeatedKingdoms: [],
+      options: { defeatedPieceMode: "remove", defeatCondition: "capture" },
+      pieces: [
+        piece("wei-horse", "horse", "马", "K5", "wei"),
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wu-general", "general", "吴", "J4", "wu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+    };
+    const horse = state.pieces.find((p) => p.id === "wei-horse")!;
+
+    expect(getLegalMoves(state, horse)).toEqual([]);
+  });
+
   it("lets cannons use a cross-kingdom screen for captures", () => {
     const state: GameState = {
       currentKingdom: "wei",
@@ -136,15 +194,15 @@ function onePieceState(piece: Piece): GameState {
   };
 }
 
-function piece(id: string, type: Piece["type"], label: string, position: Piece["position"]): Piece {
+function piece(id: string, type: Piece["type"], label: string, position: Piece["position"], kingdom: Piece["kingdom"] = "wei"): Piece {
   return {
     id,
     type,
     label,
     position,
-    kingdom: "wei",
-    controller: "wei",
-    color: "red",
+    kingdom,
+    controller: kingdom,
+    color: kingdom === "wei" ? "red" : kingdom === "wu" ? "blue" : "green",
     defeated: false,
     blocksMovement: true,
   };

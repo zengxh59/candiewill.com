@@ -3,6 +3,7 @@ import {
   type PointId,
   type RowLabel,
   getPalaceBounds,
+  kingdomOf,
   kingdomRows,
   parsePointId,
   pointId,
@@ -44,7 +45,17 @@ const crossZones: CrossZone[] = [
 ];
 
 export function getLegalMoves(state: GameState, piece: Piece): PointId[] {
-  return getPseudoLegalMoves(state, piece);
+  const controller = piece.controller;
+  return getPseudoLegalMoves(state, piece).filter((target) => {
+    return !isKingdomInCheck(simulateMove(state, piece.id, target), controller);
+  });
+}
+
+function simulateMove(state: GameState, pieceId: string, target: PointId): GameState {
+  const pieces = state.pieces
+    .filter((p) => p.id === pieceId || !(p.position === target && p.blocksMovement))
+    .map((p) => (p.id === pieceId ? { ...p, position: target } : p));
+  return { ...state, pieces };
 }
 
 export function isKingdomInCheck(state: GameState, kingdom: Kingdom): boolean {
@@ -54,16 +65,189 @@ export function isKingdomInCheck(state: GameState, kingdom: Kingdom): boolean {
     return false;
   }
 
-  return state.pieces.some((piece) => {
-    return piece.controller !== kingdom && getAttackMoves(state, piece).includes(general.position);
-  });
+  return isSquareAttackedBy(state, general.position, kingdom);
+}
+
+function isSquareAttackedBy(state: GameState, square: PointId, ownKingdom: Kingdom): boolean {
+  const isEnemy = (piece: Piece) =>
+    piece.controller !== ownKingdom && piece.blocksMovement && !(piece.defeated && piece.controller === piece.kingdom);
+  for (const line of movementLines) {
+    const index = line.indexOf(square);
+
+    if (index < 0) {
+      continue;
+    }
+
+    if (findLineAttacker(state, line.slice(index + 1), isEnemy)) return true;
+    if (findLineAttacker(state, line.slice(0, index).reverse(), isEnemy)) return true;
+    if (findLineCannon(state, line.slice(index + 1), isEnemy)) return true;
+    if (findLineCannon(state, line.slice(0, index).reverse(), isEnemy)) return true;
+  }
+
+  for (const piece of state.pieces) {
+    if (!isEnemy(piece)) {
+      continue;
+    }
+
+    if (piece.type === "horse" && horseAttacksSquare(state, piece, square)) {
+      return true;
+    }
+
+    if (piece.type === "soldier" && soldierAttacksSquare(piece, square)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function findLineAttacker(state: GameState, points: PointId[], isEnemy: (piece: Piece) => boolean): boolean {
+  for (const point of points) {
+    const piece = pieceAt(state, point);
+
+    if (!piece) {
+      continue;
+    }
+
+    if (isEnemy(piece) && (piece.type === "chariot" || piece.type === "general")) {
+      return true;
+    }
+
+    return false;
+  }
+
+  return false;
+}
+
+function findLineCannon(state: GameState, points: PointId[], isEnemy: (piece: Piece) => boolean): boolean {
+  let screenFound = false;
+
+  for (const point of points) {
+    const piece = pieceAt(state, point);
+
+    if (!screenFound) {
+      if (piece) {
+        screenFound = true;
+      }
+      continue;
+    }
+
+    if (!piece) {
+      continue;
+    }
+
+    if (isEnemy(piece) && piece.type === "cannon") {
+      return true;
+    }
+
+    return false;
+  }
+
+  return false;
+}
+
+function horseAttacksSquare(state: GameState, piece: Piece, square: PointId): boolean {
+  const { row, col } = parsePointId(piece.position);
+  const { row: targetRow, col: targetCol } = parsePointId(square);
+  const rows = kingdomRows[piece.kingdom] as readonly RowLabel[];
+  const rowIndex = rows.indexOf(row);
+  const targetRowIndex = rows.indexOf(targetRow);
+
+  if (rowIndex >= 0 && targetRowIndex >= 0) {
+    const dr = targetRowIndex - rowIndex;
+    const dc = targetCol - col;
+
+    for (const [tDr, tDc, lDr, lDc] of [
+      [-2, -1, -1, 0], [-2, 1, -1, 0], [2, -1, 1, 0], [2, 1, 1, 0],
+      [-1, -2, 0, -1], [1, -2, 0, -1], [-1, 2, 0, 1], [1, 2, 0, 1],
+    ]) {
+      if (dr === tDr && dc === tDc) {
+        const legRow = rows[rowIndex + lDr];
+        const legCol = col + lDc;
+
+        if (legRow && legCol >= 1 && legCol <= 9 && !pieceAt(state, pointId(legRow, legCol))) {
+          return true;
+        }
+      }
+    }
+  }
+
+  for (const zone of crossZones) {
+    if (!zone.kingdoms.includes(piece.kingdom)) {
+      continue;
+    }
+
+    const pos = zone.toCoord(piece.position);
+    const target = zone.toCoord(square);
+
+    if (!pos || !target) {
+      continue;
+    }
+
+    const dx = target.x - pos.x;
+    const dy = target.y - pos.y;
+
+    for (const [tDx, tDy, lDx, lDy] of [
+      [-1, -2, 0, -1], [1, -2, 0, -1], [-1, 2, 0, 1], [1, 2, 0, 1],
+      [-2, -1, -1, 0], [-2, 1, -1, 0], [2, -1, 1, 0], [2, 1, 1, 0],
+    ]) {
+      if (dx === tDx && dy === tDy) {
+        const leg = zone.fromCoord(pos.x + lDx, pos.y + lDy);
+
+        if (leg && !pieceAt(state, leg)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function soldierAttacksSquare(piece: Piece, square: PointId): boolean {
+  const { row, col } = parsePointId(piece.position);
+  const { row: targetRow, col: targetCol } = parsePointId(square);
+  const rows = kingdomRows[piece.kingdom] as readonly RowLabel[];
+  const localRowIndex = rows.indexOf(row);
+
+  if (localRowIndex < 0) {
+    for (const zone of crossZones) {
+      if (!zone.kingdoms.includes(piece.kingdom)) {
+        continue;
+      }
+
+      const pos = zone.toCoord(piece.position);
+      const target = zone.toCoord(square);
+
+      if (!pos || !target) {
+        continue;
+      }
+
+      const dx = target.x - pos.x;
+      const dy = target.y - pos.y;
+      const fwd = forwardDelta(zone, piece.kingdom);
+
+      if (dy === fwd && dx === 0) return true;
+      if (dy === 0 && (dx === -1 || dx === 1)) return true;
+    }
+
+    return false;
+  }
+
+  const targetLocalRowIndex = rows.indexOf(targetRow);
+
+  if (targetLocalRowIndex >= 0 && targetLocalRowIndex === localRowIndex - 1 && targetCol === col) {
+    return true;
+  }
+
+  return false;
 }
 
 export function getCheckedKingdoms(state: GameState): Kingdom[] {
   return (Object.keys(kingdomRows) as Kingdom[]).filter((kingdom) => isKingdomInCheck(state, kingdom));
 }
 
-function getPseudoLegalMoves(state: GameState, piece: Piece): PointId[] {
+export function getPseudoLegalMoves(state: GameState, piece: Piece): PointId[] {
   switch (piece.type) {
     case "general":
       return filterFriendlyTargets(state, piece, getGeneralMoves(piece));
@@ -157,7 +341,14 @@ function getElephantMoves(state: GameState, piece: Piece): PointId[] {
 function getHorseMoves(state: GameState, piece: Piece): PointId[] {
   const candidates = new Set<PointId>(getLocalHorseMoves(state, piece));
 
-  for (const zone of zonesForPiece(piece)) {
+  const hostKingdom = kingdomOf(piece.position);
+  if (hostKingdom !== piece.kingdom) {
+    for (const move of getLocalHorseMovesInRows(state, piece, kingdomRows[hostKingdom] as readonly RowLabel[])) {
+      candidates.add(move);
+    }
+  }
+
+  for (const zone of crossZones) {
     const position = zone.toCoord(piece.position);
 
     if (!position) {
@@ -189,9 +380,12 @@ function getHorseMoves(state: GameState, piece: Piece): PointId[] {
 }
 
 function getLocalHorseMoves(state: GameState, piece: Piece): PointId[] {
+  return getLocalHorseMovesInRows(state, piece, kingdomRows[piece.kingdom] as readonly RowLabel[]);
+}
+
+function getLocalHorseMovesInRows(state: GameState, piece: Piece, rows: readonly RowLabel[]): PointId[] {
   const { row, col } = parsePointId(piece.position);
-  const ownRows = kingdomRows[piece.kingdom] as readonly RowLabel[];
-  const rowIndex = ownRows.indexOf(row);
+  const rowIndex = rows.indexOf(row);
 
   if (rowIndex < 0) {
     return [];
@@ -207,8 +401,8 @@ function getLocalHorseMoves(state: GameState, piece: Piece): PointId[] {
     [rowIndex - 1, col + 2, rowIndex, col + 1],
     [rowIndex + 1, col + 2, rowIndex, col + 1],
   ].flatMap(([targetRowIndex, targetCol, legRowIndex, legCol]) => {
-    const targetRow = ownRows[targetRowIndex];
-    const legRow = ownRows[legRowIndex];
+    const targetRow = rows[targetRowIndex];
+    const legRow = rows[legRowIndex];
 
     if (!targetRow || !legRow || targetCol < 1 || targetCol > 9 || legCol < 1 || legCol > 9) {
       return [];

@@ -120,7 +120,7 @@ describe("turns, checks, and wins", () => {
     expect(defeatedSoldier.defeated).toBe(true);
   });
 
-  it("keeps normal move hints even when the moving kingdom is in check", () => {
+  it("filters out moves that leave the own general in check", () => {
     const state = stateWith([
       piece("wei-general", "general", "魏", "E5", "wei"),
       piece("wei-advisor", "advisor", "士", "D5", "wei"),
@@ -129,10 +129,24 @@ describe("turns, checks, and wins", () => {
       piece("wu-general", "general", "吴", "J4", "wu"),
     ]);
     const advisor = state.pieces.find((item) => item.id === "wei-advisor")!;
-    const next = applyMove(state, "wei-advisor", "C4");
+    const general = state.pieces.find((item) => item.id === "wei-general")!;
 
-    expect(getLegalMoves(state, advisor)).toContain("C4");
-    expect(next.checkedKingdoms).toContain("wei");
+    expect(() => applyMove(state, "wei-advisor", "C4")).toThrow("Illegal move");
+    expect(getLegalMoves(state, advisor)).not.toContain("C4");
+    expect(getLegalMoves(state, general)).toEqual(expect.arrayContaining(["E4"]));
+  });
+
+  it("allows moves that block or resolve check", () => {
+    const state = stateWith([
+      piece("wei-general", "general", "魏", "E5", "wei"),
+      piece("wei-chariot", "chariot", "车", "D1", "wei"),
+      piece("shu-chariot", "chariot", "车", "A5", "shu"),
+      piece("shu-general", "general", "蜀", "O4", "shu"),
+      piece("wu-general", "general", "吴", "J4", "wu"),
+    ]);
+    const chariot = state.pieces.find((item) => item.id === "wei-chariot")!;
+
+    expect(getLegalMoves(state, chariot)).toContain("D5");
   });
 
   it("lets Wu move when Shu is checking Wei", () => {

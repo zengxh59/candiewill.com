@@ -1,7 +1,7 @@
 import type { Kingdom, PointId } from "./board";
 import { kingdomRows, parsePointId } from "./board";
 import { capturedPieceAt, type GameState } from "./game-state";
-import { getCheckedKingdoms, getLegalMoves } from "./moves";
+import { getCheckedKingdoms, getLegalMoves, getPseudoLegalMoves } from "./moves";
 import { aiStyleForKingdom, defaultAiProfile, type AiProfile, type AiStyleProfile } from "./ai-profile";
 import type { Piece } from "./pieces";
 import { applyMove } from "./rules";
@@ -932,7 +932,7 @@ function activityBonus(state: GameState, piece: Piece, profile: AiProfile): numb
   }
 
   if (piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse") {
-    return getLegalMoves(state, piece).length * profile.scoring.mobilityEval;
+    return getPseudoLegalMoves(state, piece).length * profile.scoring.mobilityEval;
   }
 
   return 0;
@@ -1089,7 +1089,7 @@ function kingDefenseCaptureScore(
     score += profile.scoring.kingDefensePalaceCapture;
   }
 
-  if (getLegalMoves(state, capturedPiece).includes(movingPiece.position)) {
+  if (getPseudoLegalMoves(state, capturedPiece).includes(movingPiece.position)) {
     score += profile.scoring.kingDefenseAttackerCapture;
   }
 
@@ -1128,7 +1128,7 @@ function openingRaidPenalty(
 
 function isPointControlledByOpponent(state: GameState, point: PointId, kingdom: Kingdom): boolean {
   return state.pieces.some((piece) => {
-    return piece.controller !== kingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getLegalMoves(state, piece).includes(point);
+    return piece.controller !== kingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getPseudoLegalMoves(state, piece).includes(point);
   });
 }
 
@@ -1178,7 +1178,7 @@ function isKingDefenseCapture(state: GameState, action: AiMove, kingdom: Kingdom
     return false;
   }
 
-  return isInsideOwnPalace(kingdom, action.target) || getLegalMoves(state, capturedPiece).includes(movingPiece.position);
+  return isInsideOwnPalace(kingdom, action.target) || getPseudoLegalMoves(state, capturedPiece).includes(movingPiece.position);
 }
 
 function tacticalStabilityScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): number {
@@ -1226,13 +1226,13 @@ function kingSafetyScore(state: GameState, kingdom: Kingdom, profile: AiProfile)
     score -= profile.scoring.directCheckPenalty;
   }
 
-  const directAttackers = opponentPieces.filter((piece) => getLegalMoves(state, piece).includes(general.position));
+  const directAttackers = opponentPieces.filter((piece) => getPseudoLegalMoves(state, piece).includes(general.position));
   score -= directAttackers.length * profile.scoring.directAttackerPenalty;
 
   const palacePressure = opponentPieces.reduce((total, piece) => {
     return (
       total +
-      getLegalMoves(state, piece).filter((target) => {
+      getPseudoLegalMoves(state, piece).filter((target) => {
         const { row, col } = parsePointId(target);
 
         return palaceGuardRows.includes(row) && col >= 4 && col <= 6;
@@ -1493,7 +1493,7 @@ function threatenedPieceReliefScore(
 
   if (capturedPiece && !isNeutralBlocker(capturedPiece)) {
     const ownVictims = state.pieces.filter((piece) => {
-      return piece.controller === kingdom && piece.blocksMovement && getLegalMoves(state, capturedPiece).includes(piece.position);
+      return piece.controller === kingdom && piece.blocksMovement && getPseudoLegalMoves(state, capturedPiece).includes(piece.position);
     });
     const bestVictimValue = Math.max(0, ...ownVictims.map((piece) => pieceValue(piece, profile)));
 
@@ -1575,11 +1575,11 @@ function endgameGoalScore(
     }
 
     const directAttackers = state.pieces.filter((piece) => {
-      return piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getLegalMoves(state, piece).includes(general.position);
+      return piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getPseudoLegalMoves(state, piece).includes(general.position);
     });
     const pressureTargets = state.pieces.reduce((total, piece) => {
       return piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece)
-        ? total + getLegalMoves(state, piece).filter((target) => isInsideOwnPalace(opponent, target)).length
+        ? total + getPseudoLegalMoves(state, piece).filter((target) => isInsideOwnPalace(opponent, target)).length
         : total;
     }, 0);
 
@@ -1725,7 +1725,7 @@ function addressesHangingPiece(state: GameState, action: AiMove, kingdom: Kingdo
       piece.controller === kingdom &&
       piece.blocksMovement &&
       pieceValue(piece, profile) >= profile.pieceValues.horse &&
-      getLegalMoves(state, capturedPiece).includes(piece.position)
+      getPseudoLegalMoves(state, capturedPiece).includes(piece.position)
     );
   });
 }
@@ -1777,7 +1777,7 @@ function isPieceHanging(state: GameState, piece: Piece, profile: AiProfile): boo
 
 function attackersOf(state: GameState, point: PointId, ownKingdom: Kingdom): Piece[] {
   return state.pieces.filter((piece) => {
-    return piece.controller !== ownKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getLegalMoves(state, piece).includes(point);
+    return piece.controller !== ownKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getPseudoLegalMoves(state, piece).includes(point);
   });
 }
 
@@ -1788,7 +1788,7 @@ function defendersOf(state: GameState, point: PointId, ownKingdom: Kingdom, excl
       piece.id !== excludedPieceId &&
       piece.blocksMovement &&
       !isNeutralBlocker(piece) &&
-      getLegalMoves(state, piece).includes(point)
+      getPseudoLegalMoves(state, piece).includes(point)
     );
   });
 }
@@ -1802,11 +1802,11 @@ function mobilityDeltaScore(state: GameState, action: AiMove, movingPiece: Piece
     return 0;
   }
 
-  const before = getLegalMoves(state, movingPiece).length;
+  const before = getPseudoLegalMoves(state, movingPiece).length;
   const nextState = applySearchMove(state, action.pieceId, action.target);
   const movedPiece = nextState.pieces.find((piece) => piece.id === action.pieceId);
 
-  return movedPiece ? getLegalMoves(nextState, movedPiece).length - before : 0;
+  return movedPiece ? getPseudoLegalMoves(nextState, movedPiece).length - before : 0;
 }
 
 function positionRepetitionScore(state: GameState, kingdom: Kingdom): number {
