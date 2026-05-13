@@ -1,5 +1,5 @@
 import type { Kingdom, PointId } from "./board";
-import { kingdomRows, parsePointId } from "./board";
+import { kingdomOf, kingdomRows, parsePointId } from "./board";
 import { capturedPieceAt, type GameState } from "./game-state";
 import { getCheckedKingdoms, getLegalMoves, getPseudoLegalMoves } from "./moves";
 import { aiStyleForKingdom, defaultAiProfile, type AiProfile, type AiStyleProfile } from "./ai-profile";
@@ -132,7 +132,7 @@ export function chooseAiMove(
       return staticExchangeScore(state, right, kingdom, profile) - staticExchangeScore(state, left, kingdom, profile) || compareAction(left, right);
     })[0];
 
-  if (profitableCapture && staticExchangeScore(state, profitableCapture, kingdom, profile) >= profile.pieceValues.horse * 0.5) {
+  if (profitableCapture && staticExchangeScore(state, profitableCapture, kingdom, profile) >= profile.pieceValues.soldier) {
     return profitableCapture;
   }
 
@@ -456,10 +456,9 @@ function getCandidateActions(
     const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
 
     return (
-      (capturedPiece?.type === "general" && !isNeutralBlocker(capturedPiece)) ||
+      (capturedPiece && !isNeutralBlocker(capturedPiece)) ||
       isKingDefenseCapture(state, action, kingdom) ||
       givesDirectCheck(state, action, kingdom) ||
-      isProfitableCapture(state, action, kingdom, profile) ||
       addressesHangingPiece(state, action, kingdom, profile) ||
       (phase === "endgame" && isEndgameForcingAction(state, action, kingdom, profile))
     );
@@ -691,6 +690,10 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, pr
 
   if (movingPiece.type === "horse" || movingPiece.type === "chariot" || movingPiece.type === "cannon") {
     score += profile.scoring.activePieceAction * style.mobilityMultiplier;
+
+    if (kingdomOf(action.target) !== movingPiece.kingdom) {
+      score += profile.pieceValues.soldier * 0.6 * style.attackMultiplier;
+    }
   }
 
   score += developmentScore(state, action, movingPiece, profile) * style.developmentMultiplier;
@@ -932,7 +935,13 @@ function activityBonus(state: GameState, piece: Piece, profile: AiProfile): numb
   }
 
   if (piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse") {
-    return getPseudoLegalMoves(state, piece).length * profile.scoring.mobilityEval;
+    let bonus = getPseudoLegalMoves(state, piece).length * profile.scoring.mobilityEval;
+
+    if (kingdomOf(piece.position) !== piece.kingdom) {
+      bonus += profile.pieceValues.soldier * 0.4;
+    }
+
+    return bonus;
   }
 
   return 0;
