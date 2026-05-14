@@ -311,6 +311,23 @@ body {
   right: clamp(4px, 1vw, 10px);
 }
 
+.resign-button {
+  position: absolute;
+  top: clamp(4px, 1vw, 10px);
+  right: calc(clamp(4px, 1vw, 10px) + clamp(56px, 8.5vw, 86px) + 6px);
+  z-index: 2;
+  min-width: 42px;
+  min-height: 32px;
+  padding: clamp(4px, 0.9vw, 6px) clamp(8px, 1.4vw, 10px);
+  font-size: clamp(12px, 1.55vw, 14px);
+  background: #f5f5f5;
+  color: #111;
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+}
+
 .undo-button {
   left: clamp(4px, 1vw, 10px);
 }

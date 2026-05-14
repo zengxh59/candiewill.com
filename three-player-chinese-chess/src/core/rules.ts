@@ -63,7 +63,7 @@ export function applyMove(state: GameState, pieceId: string, target: PointId): G
     winner,
     defeatedKingdoms,
     lastMoveMessage: checkmateDefeatedKingdoms.length
-      ? `${checkmateDefeatedKingdoms.map(kingdomName).join("、")}出局`
+      ? `${checkmateDefeatedKingdoms.map(kingdomName).join("、")}被将死出局`
       : stalemateSkipped
       ? stalemateSkipped
       : capturedPiece

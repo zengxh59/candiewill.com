@@ -14,7 +14,7 @@ import {
 } from "../core/game-state";
 import { getCheckedKingdoms, getLegalMoves } from "../core/moves";
 import type { Piece } from "../core/pieces";
-import { applyMove, kingdomName } from "../core/rules";
+import { applyMove, kingdomName, resignKingdom } from "../core/rules";
 import type { ClientOnlineMessage, OnlineRoomSnapshot, ServerOnlineMessage } from "../online/protocol";
 import { drawBoard, type BoardAnimation } from "../renderer/canvas-board";
 import { defaultGeometry, hitTestBoardPoint, pointIdPosition } from "../renderer/geometry";
@@ -25,6 +25,7 @@ const startScreen = document.querySelector<HTMLElement>("#start-screen");
 const startButton = document.querySelector<HTMLButtonElement>("#start-game");
 const settingsButton = document.querySelector<HTMLButtonElement>("#show-settings");
 const undoButton = document.querySelector<HTMLButtonElement>("#undo-move");
+const resignButton = document.querySelector<HTMLButtonElement>("#resign-game");
 const onlineRoomCodeInput = document.querySelector<HTMLInputElement>("#online-room-code");
 const onlineRoomOutput = document.querySelector<HTMLOutputElement>("#online-room-output");
 const confirmDialog = document.querySelector<HTMLDivElement>("#confirm-dialog");
@@ -40,6 +41,7 @@ if (
   !startButton ||
   !settingsButton ||
   !undoButton ||
+  !resignButton ||
   !onlineRoomCodeInput ||
   !onlineRoomOutput ||
   !confirmDialog ||
@@ -85,6 +87,12 @@ state = {
 
 function render(): void {
   undoButton!.disabled = !canUndoLastPlayerMove();
+  resignButton!.hidden = !(
+    currentGameMode === "ai" &&
+    !state.winner &&
+    !state.defeatedKingdoms.includes(humanKingdom) &&
+    startScreen!.classList.contains("is-hidden")
+  );
   drawBoard(canvas!, defaultGeometry, state, {
     currentKingdom: state.currentKingdom,
     thinkingKingdom: isAiThinking ? state.currentKingdom : null,
@@ -233,6 +241,10 @@ settingsButton.addEventListener("click", () => {
 
 undoButton.addEventListener("click", () => {
   undoLastPlayerMove();
+});
+
+resignButton.addEventListener("click", () => {
+  void handleResignRequest();
 });
 
 onlineRoomCodeInput.addEventListener("input", () => {
@@ -456,6 +468,28 @@ function undoLastPlayerMove(): void {
     lastMoveMessage: `已悔棋，轮到${kingdomName(humanKingdom)}行棋`,
   };
   undoSnapshot = null;
+  render();
+}
+
+async function handleResignRequest(): Promise<void> {
+  const confirmed = await showConfirmDialog({
+    title: "确认认输",
+    message: "认输后将判为出局，本局结束。确定要认输吗？",
+    okText: "确认认输",
+  });
+
+  if (!confirmed) {
+    return;
+  }
+
+  clearAiTimer();
+  stopThinkingLoop();
+  isAiThinking = false;
+  isAnimating = false;
+  currentAnimation = null;
+  undoSnapshot = null;
+
+  state = resignKingdom(state, humanKingdom);
   render();
 }
 
