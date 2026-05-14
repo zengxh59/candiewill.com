@@ -72,6 +72,8 @@ const tunableScalars: Array<keyof AiProfile["scoring"]> = [
   "generalAwayPenalty",
   "balanceGapPenalty",
   "tacticalPieceRiskMultiplier",
+  "coordinationBonus",
+  "centerControlBonus",
 ];
 
 export function runAiBenchmark(profile: AiProfile = defaultAiProfile, options: AiBenchmarkOptions = {}): AiBenchmarkReport {
@@ -599,6 +601,7 @@ const mutationGroups: Array<Array<keyof AiProfile["scoring"]>> = [
   ["badTradeMultiplier", "exposedTradeMultiplier", "directAttackerPenalty", "checkedSelfPenalty"],
   ["openingRaidPenalty", "defenderBonus", "generalAwayPenalty", "palacePressurePenalty"],
   ["kingDefensePalaceCapture", "kingDefenseAttackerCapture", "directCheckPenalty", "balanceGapPenalty"],
+  ["coordinationBonus", "centerControlBonus", "soldierAdvanceEval", "mobilityEval"],
 ];
 
 function blendProfiles(best: AiProfile, original: AiProfile, random: () => number): AiProfile {

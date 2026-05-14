@@ -2,13 +2,12 @@ import type { Kingdom, PointId } from "../board";
 import { kingdomOf, kingdomRows, parsePointId } from "../board";
 import { capturedPieceAt, type GameState } from "../game-state";
 import { getPseudoLegalMoves } from "../moves";
-import type { AiProfile, AiStyleProfile } from "../ai-profile";
+import type { AiProfile, AiStyleProfile, GamePhase } from "../ai-profile";
 import type { Piece } from "../pieces";
 
 import { isPointControlledByOpponent, attackersOf, defendersOf, cheapestPieceValue, generalFor, isInsideOwnPalace, hangingPieceMargin } from "./tactical";
 
 const winScore = 1_000_000;
-type GamePhase = "opening" | "middlegame" | "endgame";
 
 export function evaluateState(state: GameState, aiKingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): number {
   if (state.winner === aiKingdom) {
@@ -23,7 +22,8 @@ export function evaluateState(state: GameState, aiKingdom: Kingdom, profile: AiP
     return -winScore / 2;
   }
 
-  const material = materialByController(state, profile);
+  const phase = gamePhaseFor(state);
+  const material = materialByController(state, profile, phase);
   const opponentScores = (Object.keys(material) as Kingdom[]).filter((kingdom) => kingdom !== aiKingdom).map((kingdom) => material[kingdom]);
   let score = material[aiKingdom] - Math.max(...opponentScores) * 0.9 - Math.min(...opponentScores) * 0.45;
 
@@ -32,7 +32,7 @@ export function evaluateState(state: GameState, aiKingdom: Kingdom, profile: AiP
       continue;
     }
 
-    const value = pieceValue(piece, profile);
+    const value = pieceValue(piece, profile, phase);
 
     if (piece.controller === aiKingdom) {
       score += activityBonus(state, piece, profile) * style.mobilityMultiplier + formationBonus(state, piece, profile) * style.developmentMultiplier;
@@ -53,14 +53,24 @@ export function evaluateState(state: GameState, aiKingdom: Kingdom, profile: AiP
   score += kingSafetyScore(state, aiKingdom, profile) * style.safetyMultiplier;
   score += pieceSafetyScore(state, aiKingdom, profile, style);
   score += threePlayerBalanceScore(material, aiKingdom, profile) * style.balanceMultiplier;
+  score += pieceCoordinationScore(state, aiKingdom, profile) * style.attackMultiplier;
+  score += centerControlScore(state, aiKingdom, profile) * style.mobilityMultiplier;
+  score += allianceAwareScore(state, aiKingdom, material, profile, style);
   score += endgameGoalScore(state, aiKingdom, material, profile, style);
   score -= positionRepetitionScore(state, aiKingdom);
 
   return score;
 }
 
-export function pieceValue(piece: Piece, profile: AiProfile): number {
-  return profile.pieceValues[piece.type] + (piece.type === "soldier" ? soldierAdvance(piece) * 25 : 0);
+export function pieceValue(piece: Piece, profile: AiProfile, phase?: GamePhase): number {
+  const base = profile.pieceValues[piece.type];
+  const phaseOverride = phase && profile.phasePieceValues?.[phase]?.[piece.type];
+  const value = phaseOverride ?? base;
+  const soldierBonus = piece.type === "soldier" ? soldierAdvance(piece) * 25 : 0;
+  const crossedBonus = piece.type === "soldier" && hasCrossedBorder(piece)
+    ? soldierAdvance(piece) * 25 * (profile.scoring.crossedSoldierMultiplier - 1)
+    : 0;
+  return value + soldierBonus + crossedBonus;
 }
 
 export function isNeutralBlocker(piece: Piece): boolean {
@@ -73,6 +83,10 @@ export function soldierAdvance(piece: Piece): number {
   const index = rows.indexOf(row as never);
 
   return index >= 0 ? rows.length - 1 - index : rows.length;
+}
+
+export function hasCrossedBorder(piece: Piece): boolean {
+  return !isOwnKingdomPoint(piece.kingdom, piece.position);
 }
 
 export function gamePhaseFor(state: GameState): GamePhase {
@@ -143,7 +157,7 @@ function formationBonus(state: GameState, piece: Piece, profile: AiProfile): num
   return 0;
 }
 
-export function materialByController(state: GameState, profile: AiProfile): Record<Kingdom, number> {
+export function materialByController(state: GameState, profile: AiProfile, phase?: GamePhase): Record<Kingdom, number> {
   const material: Record<Kingdom, number> = {
     wei: 0,
     shu: 0,
@@ -155,7 +169,7 @@ export function materialByController(state: GameState, profile: AiProfile): Reco
       continue;
     }
 
-    material[piece.controller] += pieceValue(piece, profile);
+    material[piece.controller] += pieceValue(piece, profile, phase);
   }
 
   return material;
@@ -445,4 +459,209 @@ function simplifiedEndgameBonus(state: GameState, aiKingdom: Kingdom, profile: A
 
     return total + (piece.controller === aiKingdom ? value * 0.12 : -value * 0.28);
   }, 0);
+}
+
+function pieceCoordinationScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile): number {
+  const ownPieces = state.pieces.filter(
+    (piece) => piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece),
+  );
+  let score = 0;
+  const bonus = profile.scoring.coordinationBonus;
+
+  const chariots = ownPieces.filter((piece) => piece.type === "chariot");
+  const cannons = ownPieces.filter((piece) => piece.type === "cannon");
+  const horses = ownPieces.filter((piece) => piece.type === "horse");
+
+  // Chariot-Cannon coordination: same file or rank → double attack pressure
+  for (const chariot of chariots) {
+    for (const cannon of cannons) {
+      const chariotPos = parsePointId(chariot.position);
+      const cannonPos = parsePointId(cannon.position);
+
+      // Same file (column): strong combo — chariot clears path, cannon attacks behind
+      if (chariotPos.col === cannonPos.col) {
+        const sameFile = areOnSameMovementLine(state, chariot.position, cannon.position);
+        if (sameFile) {
+          score += bonus * 1.2;
+        }
+      }
+
+      // Same rank (row): also good if on the same kingdom row or connected cross-kingdom
+      if (chariotPos.row === cannonPos.row) {
+        score += bonus * 0.8;
+      }
+    }
+  }
+
+  // Horse-Chariot coordination: horse attacks squares the chariot can't reach (off-line)
+  for (const chariot of chariots) {
+    for (const horse of horses) {
+      const chariotMoves = new Set(getPseudoLegalMoves(state, chariot));
+      const horseMoves = getPseudoLegalMoves(state, horse);
+
+      // Count horse moves that attack squares the chariot can't (complementary control)
+      let complementaryCount = 0;
+      for (const target of horseMoves) {
+        if (!chariotMoves.has(target)) {
+          complementaryCount += 1;
+        }
+      }
+
+      if (complementaryCount >= 3) {
+        score += bonus * 0.9;
+      } else if (complementaryCount >= 1) {
+        score += bonus * 0.3;
+      }
+    }
+  }
+
+  // Cannon screen density: cannons are stronger when there are more pieces nearby to use as screens
+  for (const cannon of cannons) {
+    const cannonMoves = getPseudoLegalMoves(state, cannon);
+    const captureTargets = cannonMoves.filter((target) => {
+      const targetPiece = state.pieces.find((piece) => piece.blocksMovement && piece.position === target);
+      return targetPiece && targetPiece.controller !== aiKingdom;
+    });
+
+    // Active cannon with capture potential
+    if (captureTargets.length >= 2) {
+      score += bonus * 0.6;
+    }
+  }
+
+  return score;
+}
+
+function areOnSameMovementLine(state: GameState, pointA: PointId, pointB: PointId): boolean {
+  const posA = parsePointId(pointA);
+  const posB = parsePointId(pointB);
+
+  // Same column within same kingdom
+  if (posA.col === posB.col) {
+    const kingdomA = kingdomOf(pointA);
+    const kingdomB = kingdomOf(pointB);
+
+    if (kingdomA === kingdomB) {
+      return true;
+    }
+
+    // Cross-kingdom same-file connection (columns 1-5 connect to 9-5 in adjacent kingdoms)
+    const rowsA = kingdomRows[kingdomA] as readonly string[];
+    const rowsB = kingdomRows[kingdomB] as readonly string[];
+    const rowIndexA = rowsA.indexOf(posA.row);
+    const rowIndexB = rowsB.indexOf(posB.row);
+
+    // One piece at boundary edge, other at corresponding entry of adjacent kingdom
+    if (rowIndexA === 0 && rowIndexB === rowsB.length - 1) {
+      return true;
+    }
+    if (rowIndexA === rowsA.length - 1 && rowIndexB === 0) {
+      return true;
+    }
+  }
+
+  // Same row
+  if (posA.row === posB.row) {
+    return true;
+  }
+
+  return false;
+}
+
+function centerControlScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile): number {
+  const opponents = (Object.keys(kingdomRows) as Kingdom[]).filter(
+    (kingdom) => kingdom !== aiKingdom && !state.defeatedKingdoms.includes(kingdom),
+  );
+
+  if (opponents.length === 0) {
+    return 0;
+  }
+
+  let score = 0;
+  const bonus = profile.scoring.centerControlBonus;
+
+  const ownActivePieces = state.pieces.filter(
+    (piece) => piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece) &&
+      (piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse"),
+  );
+
+  for (const piece of ownActivePieces) {
+    const pos = parsePointId(piece.position);
+    const centerDist = Math.abs(pos.col - 5);
+
+    if (centerDist <= 1) {
+      score += bonus;
+    } else if (centerDist <= 2) {
+      score += bonus * 0.4;
+    }
+  }
+
+  return score;
+}
+
+function allianceAwareScore(
+  state: GameState,
+  aiKingdom: Kingdom,
+  material: Record<Kingdom, number>,
+  profile: AiProfile,
+  style: AiStyleProfile,
+): number {
+  const activeOpponents = (Object.keys(material) as Kingdom[]).filter(
+    (kingdom) => kingdom !== aiKingdom && !state.defeatedKingdoms.includes(kingdom),
+  );
+
+  if (activeOpponents.length < 2) {
+    return 0;
+  }
+
+  const aiMaterial = material[aiKingdom];
+  const sorted = activeOpponents.sort((left, right) => material[right] - material[left]);
+  const strongestMaterial = material[sorted[0]];
+  const weakestMaterial = material[sorted[1]];
+  let score = 0;
+
+  // If AI is leading, opponents may form coalition against us — increase safety
+  if (aiMaterial > strongestMaterial * 1.2) {
+    const coalitionThreat = (strongestMaterial + weakestMaterial) * 0.35;
+    score -= coalitionThreat * style.safetyMultiplier * 0.08;
+    score -= profile.scoring.balanceGapPenaltyMax * 0.5;
+  }
+
+  // If one opponent is far stronger than the other, encourage keeping the weaker alive
+  if (strongestMaterial > weakestMaterial * 1.5) {
+    const eliminationRisk = (strongestMaterial - weakestMaterial) * 0.04;
+    score -= eliminationRisk * style.balanceMultiplier;
+  }
+
+  // If an opponent is about to be eliminated, evaluate whether that benefits us
+  const weakestGeneral = generalFor(state, sorted[1]);
+  if (weakestGeneral) {
+    const attackersOnWeakGeneral = state.pieces.filter(
+      (piece) =>
+        piece.controller === sorted[0] &&
+        piece.blocksMovement &&
+        !isNeutralBlocker(piece) &&
+        getPseudoLegalMoves(state, piece).includes(weakestGeneral.position),
+    );
+
+    if (attackersOnWeakGeneral.length >= 2 && sorted[0] !== aiKingdom) {
+      // Strongest opponent is about to eliminate weakest — bad for us
+      score -= 1800 * style.safetyMultiplier;
+
+      // Bonus for interfering to save the weak kingdom
+      const ourDefendersNear = state.pieces.filter(
+        (piece) =>
+          piece.controller === aiKingdom &&
+          piece.blocksMovement &&
+          !isNeutralBlocker(piece) &&
+          piece.type !== "general" &&
+          getPseudoLegalMoves(state, piece).some(
+            (target) => target === weakestGeneral.position || attackersOnWeakGeneral.some((a) => a.position === target),
+          ),
+      );
+      score += ourDefendersNear.length * 400 * style.attackMultiplier;
+    }
+  }
+
+  return score;
 }

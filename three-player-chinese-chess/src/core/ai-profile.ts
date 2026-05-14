@@ -16,6 +16,8 @@ export interface AiStyleProfile {
   preferredPieces: Partial<Record<PieceType, number>>;
 }
 
+export type GamePhase = "opening" | "middlegame" | "endgame";
+
 export interface AiProfile {
   searchDepth: number;
   rootBeam: number;
@@ -23,6 +25,7 @@ export interface AiProfile {
   thirdPlayerBeam: number;
   safetyScanLimit: number;
   pieceValues: Record<PieceType, number>;
+  phasePieceValues?: Partial<Record<GamePhase, Partial<Record<PieceType, number>>>>;
   scoring: {
     rootActionWeight: number;
     generalCaptureBonus: number;
@@ -62,6 +65,9 @@ export interface AiProfile {
     tacticalGeneralRiskMultiplier: number;
     tacticalPieceRiskMultiplier: number;
     tacticalOpponentRiskReward: number;
+    coordinationBonus: number;
+    centerControlBonus: number;
+    crossedSoldierMultiplier: number;
   };
 }
 
@@ -122,9 +128,9 @@ export function aiStyleForKingdom(kingdom: Kingdom): AiStyleProfile {
 
 export const defaultAiProfile: AiProfile = {
   "searchDepth": 3,
-  "rootBeam": 12,
-  "responseBeam": 5,
-  "thirdPlayerBeam": 3,
+  "rootBeam": 20,
+  "responseBeam": 10,
+  "thirdPlayerBeam": 6,
   "safetyScanLimit": 18,
   "pieceValues": {
     "general": 12000,
@@ -134,6 +140,19 @@ export const defaultAiProfile: AiProfile = {
     "elephant": 200,
     "advisor": 200,
     "soldier": 100
+  },
+  "phasePieceValues": {
+    "opening": {
+      "cannon": 450,
+      "horse": 350,
+    },
+    "endgame": {
+      "cannon": 350,
+      "horse": 450,
+      "chariot": 950,
+      "soldier": 150,
+      "advisor": 250,
+    },
   },
   "scoring": {
     "rootActionWeight": 0.35,
@@ -156,15 +175,15 @@ export const defaultAiProfile: AiProfile = {
     "defeatedOpponentReward": 8000,
     "checkedSelfPenalty": 4000,
     "checkedOpponentReward": 1800,
-    "soldierAdvanceEval": 18,
-    "mobilityEval": 16,
+    "soldierAdvanceEval": 28.85,
+    "mobilityEval": 18.08,
     "openingCannonOutPenalty": -130,
     "openingMajorDeveloped": 110,
     "advisorElephantHome": 40,
     "advisorElephantAwayPenalty": -160,
     "directCheckPenalty": 28000,
     "directAttackerPenalty": 18000,
-    "palacePressurePenalty": 1050,
+    "palacePressurePenalty": 871.19,
     "defenderBonus": 1102.608,
     "generalHomeBonus": 1200,
     "generalAwayPenalty": 1800,
@@ -173,6 +192,9 @@ export const defaultAiProfile: AiProfile = {
     "balanceGapPenaltyMax": 2400,
     "tacticalGeneralRiskMultiplier": 3.5,
     "tacticalPieceRiskMultiplier": 0.6,
-    "tacticalOpponentRiskReward": 0.35
+    "tacticalOpponentRiskReward": 0.35,
+    "coordinationBonus": 168.88,
+    "centerControlBonus": 60,
+    "crossedSoldierMultiplier": 2.0
   }
 };

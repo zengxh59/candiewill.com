@@ -230,6 +230,55 @@ export const aiScenarios: AiScenario[] = [
       "wei",
     ),
   },
+  {
+    id: "endgame-chariot-cannon-coordination",
+    title: "残局车炮配合应向弱势方主公施压",
+    kingdom: "wei",
+    mustCaptureIfProfitable: true,
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-chariot", "chariot", "车", "H5", "wei"),
+        piece("wei-cannon", "cannon", "炮", "H2", "wei"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ],
+      "wei",
+    ),
+  },
+  {
+    id: "avoid-elimination-of-weakest",
+    title: "当一个对手即将被另一对手吃掉主公时不应忽视",
+    kingdom: "wu",
+    state: stateWith(
+      [
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wu-chariot", "chariot", "车", "F5", "wu"),
+        piece("wei-chariot", "chariot", "车", "N4", "wei"),
+        piece("wei-horse", "horse", "马", "N6", "wei"),
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+        piece("shu-soldier", "soldier", "兵", "O3", "shu"),
+      ],
+      "wu",
+    ),
+  },
+  {
+    id: "endgame-horse-more-valuable",
+    title: "残局马价值高于炮，应用马逼近敌方主公",
+    kingdom: "wu",
+    state: stateWith(
+      [
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wu-horse", "horse", "马", "F6", "wu"),
+        piece("wu-cannon", "cannon", "炮", "G2", "wu"),
+        piece("wei-general", "general", "魏", "E4", "wei"),
+        piece("wei-soldier", "soldier", "兵", "D5", "wei"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ],
+      "wu",
+    ),
+  },
 ];
 
 function stateWith(pieces: Piece[], currentKingdom: GameState["currentKingdom"], checkedKingdoms: GameState["checkedKingdoms"] = []): GameState {

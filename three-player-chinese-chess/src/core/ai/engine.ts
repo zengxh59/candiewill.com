@@ -1,8 +1,9 @@
 import type { Kingdom, PointId } from "../board";
 import { kingdomOf, kingdomRows, parsePointId } from "../board";
-import { capturedPieceAt, type GameState } from "../game-state";
+import { capturedPieceAt, nextActiveKingdom, turnOrder, type GameState } from "../game-state";
 import { getCheckedKingdoms, getLegalMoves, getPseudoLegalMoves } from "../moves";
 import { aiStyleForKingdom, defaultAiProfile, type AiProfile, type AiStyleProfile } from "../ai-profile";
+import { lookupOpeningBook } from "./opening-book";
 import type { Piece } from "../pieces";
 
 import {
@@ -134,6 +135,19 @@ export function chooseAiMove(
     return null;
   }
 
+  // Try opening book lookup for early game (skip when exploring for diversity)
+  if (phase === "opening" && (moveOptions.explorationRate ?? 0) <= 0 && state.moveHistory && state.moveHistory.length <= 6 && !state.checkedKingdoms.includes(kingdom)) {
+    const bookMove = lookupOpeningBook(state.moveHistory, kingdom, moveOptions.random);
+
+    if (bookMove) {
+      const validMove = actions.find((action) => action.pieceId === bookMove.pieceId && action.target === bookMove.target);
+
+      if (validMove) {
+        return validMove;
+      }
+    }
+  }
+
   const urgentKingDefense = actions.find((action) => isKingDefenseCapture(state, action, kingdom));
 
   if (urgentKingDefense) {
@@ -184,6 +198,7 @@ export function chooseAiMove(
   let bestAction = rootActions[0];
   let bestScore = Number.NEGATIVE_INFINITY;
   let scoredActions: Array<{ action: AiMove; score: number }> = [];
+  let prevIterationScores: Array<{ action: AiMove; score: number }> = [];
 
   for (let depth = 0; depth <= targetDepth; depth += 1) {
     if (!hasSearchTime(context) && scoredActions.length > 0) {
@@ -191,7 +206,7 @@ export function chooseAiMove(
     }
 
     const searchProfile = searchProfileForState(state, profile, moveOptions, depth);
-    const orderedRootActions = orderActions(state, rootActions, kingdom, searchProfile, style, context, 0, context.principalVariation[0]);
+    const orderedRootActions = orderRootActions(state, rootActions, kingdom, searchProfile, style, context, context.principalVariation[0], prevIterationScores);
     const iterationScores: Array<{ action: AiMove; score: number }> = [];
     let iterationBestAction = bestAction;
     let iterationBestScore = Number.NEGATIVE_INFINITY;
@@ -221,6 +236,7 @@ export function chooseAiMove(
       bestAction = iterationBestAction;
       bestScore = iterationBestScore;
       scoredActions = iterationScores.sort((left, right) => right.score - left.score || compareAction(left.action, right.action));
+      prevIterationScores = scoredActions;
       context.stats.completedDepth = depth;
       context.principalVariation = [bestAction, ...principalVariationFor(applySearchMove(state, bestAction.pieceId, bestAction.target), kingdom, context)];
     }
@@ -278,7 +294,7 @@ function searchProfileForState(state: GameState, profile: AiProfile, options: Ai
   if (phase === "endgame") {
     return {
       ...profile,
-      responseBeam: Math.min(profile.responseBeam + 2, profile.rootBeam),
+      responseBeam: Math.min(profile.responseBeam + 1, profile.rootBeam),
       thirdPlayerBeam: Math.min(profile.thirdPlayerBeam + 1, profile.responseBeam),
       safetyScanLimit: Math.max(profile.safetyScanLimit, 24),
     };
@@ -364,6 +380,35 @@ function search(
     );
   }
 
+  // Null move pruning adapted for 3-player chess
+  // Conditions: it's our turn, not in check, enough depth, enough material to sacrifice
+  if (state.currentKingdom === aiKingdom && !state.checkedKingdoms.includes(aiKingdom) && depth >= 3 && hasEnoughMaterialForNullMove(state, aiKingdom, profile)) {
+    const nullState = skipTurn(state);
+
+    if (nullState) {
+      // Use reduced depth R=2 (not R=3, since skipping in 3-player is riskier)
+      const nullScore = search(nullState, aiKingdom, depth - 2, beta, beta + 1, profile, aiStyle, context);
+
+      if (nullScore >= beta && hasSearchTime(context)) {
+        // Verification: do a shallow search to confirm the position is really good
+        const verifyScore = search(
+          state,
+          aiKingdom,
+          1,
+          beta - 1,
+          beta,
+          profile,
+          aiStyle,
+          context,
+        );
+
+        if (verifyScore >= beta) {
+          return nullScore;
+        }
+      }
+    }
+  }
+
   const originalAlpha = alpha;
   const originalBeta = beta;
   const ttKey = `${aiKingdom}|${searchStateKey(state)}`;
@@ -389,9 +434,15 @@ function search(
 
   const currentKingdom = state.currentKingdom;
   const currentStyle = currentKingdom === aiKingdom ? aiStyle : aiStyleForKingdom(currentKingdom);
+  const isTactical = state.checkedKingdoms.length > 0;
+  const baseBeam = currentKingdom === aiKingdom ? profile.responseBeam : profile.thirdPlayerBeam;
+  // Reduce beam when running low on time
+  const timePressure = context.deadline !== Number.POSITIVE_INFINITY ? (context.deadline - performance.now()) / (context.deadline - (context.deadline - 200)) : 1;
+  const pressureMultiplier = timePressure < 0.3 ? 0.5 : timePressure < 0.6 ? 0.75 : 1;
+  const beamLimit = Math.max(2, Math.floor((isTactical ? Math.min(baseBeam + 4, baseBeam * 2) : baseBeam) * pressureMultiplier));
   const actions = orderActions(state, getCandidateActions(state, currentKingdom, profile, currentStyle, context), currentKingdom, profile, currentStyle, context, depth, ttEntry?.bestMove).slice(
     0,
-    currentKingdom === aiKingdom ? profile.responseBeam : profile.thirdPlayerBeam,
+    beamLimit,
   );
 
   if (!actions.length) {
@@ -471,8 +522,9 @@ function getCandidateActions(
   style: AiStyleProfile,
   context?: SearchContext,
 ): AiMove[] {
+  const deepMode = context !== undefined;
   const actions = getAllActions(state, kingdom).sort((left, right) => {
-    const scoreDiff = cheapActionScore(state, right, kingdom, profile, style) - cheapActionScore(state, left, kingdom, profile, style);
+    const scoreDiff = cheapActionScore(state, right, kingdom, profile, style, deepMode) - cheapActionScore(state, left, kingdom, profile, style, deepMode);
 
     return scoreDiff || compareAction(left, right);
   });
@@ -597,6 +649,41 @@ function orderActions(
   });
 }
 
+function orderRootActions(
+  state: GameState,
+  actions: AiMove[],
+  kingdom: Kingdom,
+  profile: AiProfile,
+  style: AiStyleProfile,
+  context: SearchContext,
+  preferredMove: AiMove | null | undefined,
+  prevScores: Array<{ action: AiMove; score: number }>,
+): AiMove[] {
+  const prevScoreMap = new Map<string, number>();
+
+  for (const item of prevScores) {
+    prevScoreMap.set(actionKey(item.action), item.score);
+  }
+
+  const killers = context.killerMoves.get(0) ?? [];
+
+  return [...actions].sort((left, right) => {
+    const leftPrev = prevScoreMap.get(actionKey(left)) ?? Number.NEGATIVE_INFINITY;
+    const rightPrev = prevScoreMap.get(actionKey(right)) ?? Number.NEGATIVE_INFINITY;
+    const prevDiff = rightPrev - leftPrev;
+
+    if (Math.abs(prevDiff) > 200) {
+      return prevDiff > 0 ? -1 : 1;
+    }
+
+    const scoreDiff =
+      actionOrderingScore(state, right, kingdom, profile, style, context, 0, preferredMove, killers) -
+      actionOrderingScore(state, left, kingdom, profile, style, context, 0, preferredMove, killers);
+
+    return scoreDiff || compareAction(left, right);
+  });
+}
+
 function actionOrderingScore(
   state: GameState,
   action: AiMove,
@@ -610,7 +697,8 @@ function actionOrderingScore(
 ): number {
   const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
   const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
-  let score = cheapActionScore(state, action, kingdom, profile, style);
+  const deepMode = (context !== undefined && ply > 0);
+  let score = cheapActionScore(state, action, kingdom, profile, style, deepMode);
 
   if (!movingPiece) {
     return score;
@@ -627,8 +715,10 @@ function actionOrderingScore(
   score += context?.history.get(actionKey(action)) ?? 0;
 
   if (capturedPiece && !isNeutralBlocker(capturedPiece)) {
+    // MVV-LVA: prioritize capturing high-value pieces with low-value attackers
     score += pieceValue(capturedPiece, profile) * 11 - pieceValue(movingPiece, profile) * 2;
     score += staticExchangeScore(state, action, kingdom, profile) * 4;
+    score += mvvLvaBonus(capturedPiece, movingPiece, profile);
   }
 
   if (state.checkedKingdoms.includes(kingdom)) {
@@ -658,7 +748,7 @@ function doesNotLeaveKingdomInCheck(state: GameState, action: AiMove, kingdom: K
   return !getCheckedKingdoms(nextState).includes(kingdom);
 }
 
-function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): number {
+function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, profile: AiProfile, style: AiStyleProfile, deepMode = false): number {
   const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
   const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
   let score = 0;
@@ -693,7 +783,9 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, pr
     const see = staticExchangeScore(state, action, kingdom, profile);
 
     score += Math.max(-pieceValue(movingPiece, profile), see) * 1.8;
-    score -= exchangeRiskPenalty(state, action, movingPiece, capturedPiece, kingdom, profile, style);
+    if (!deepMode) {
+      score -= exchangeRiskPenalty(state, action, movingPiece, capturedPiece, kingdom, profile, style);
+    }
     score -= openingRaidPenalty(state, action, movingPiece, capturedPiece, profile);
   }
 
@@ -715,10 +807,15 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, pr
 
   score += developmentScore(state, action, movingPiece, profile) * style.developmentMultiplier;
   score += targetPressureScore(state, action.target, kingdom, profile, style);
-  score += tacticalActionScore(state, action, movingPiece, capturedPiece, kingdom, profile, style);
-  score += threatenedPieceReliefScore(state, action, movingPiece, capturedPiece, kingdom, profile, style);
+
+  // Skip expensive state simulations in deep search ordering
+  if (!deepMode) {
+    score += tacticalActionScore(state, action, movingPiece, capturedPiece, kingdom, profile, style);
+    score += threatenedPieceReliefScore(state, action, movingPiece, capturedPiece, kingdom, profile, style);
+    score -= quietExposurePenalty(state, action, movingPiece, capturedPiece, kingdom, profile, style);
+  }
+
   score += style.preferredPieces[movingPiece.type] ?? 0;
-  score -= quietExposurePenalty(state, action, movingPiece, capturedPiece, kingdom, profile, style);
   score -= repetitiveQuietMovePenalty(state, action, movingPiece, capturedPiece);
 
   return score;
@@ -832,13 +929,24 @@ function quiescenceSearch(
     tacticalStabilityScore(state, aiKingdom, profile, aiStyle) +
     forcingOpportunityScore(state, aiKingdom, profile, aiStyle);
 
-  if (!hasSearchTime(context) || state.winner || qDepth >= context.maxQuiescenceDepth) {
+  const currentKingdom = state.currentKingdom;
+
+  // Check extension: extend quiescence when in check to find escape routes
+  const inCheck = state.checkedKingdoms.includes(currentKingdom);
+  const effectiveMaxDepth = inCheck ? context.maxQuiescenceDepth + 2 : context.maxQuiescenceDepth;
+
+  if (!hasSearchTime(context) || state.winner || qDepth >= effectiveMaxDepth) {
     return standPat;
   }
 
-  const currentKingdom = state.currentKingdom;
   const currentStyle = currentKingdom === aiKingdom ? aiStyle : aiStyleForKingdom(currentKingdom);
   const phase = gamePhaseFor(state);
+  // Reduce branching at deeper quiescence levels
+  const qBeamLimit = qDepth >= 2
+    ? (currentKingdom === aiKingdom ? 4 : 3)
+    : phase === "endgame"
+      ? (currentKingdom === aiKingdom ? 10 : 6)
+      : currentKingdom === aiKingdom ? 8 : 5;
   const tacticalActions = getCandidateActions(state, currentKingdom, profile, currentStyle, context)
     .filter((action) => {
       const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
@@ -850,7 +958,7 @@ function quiescenceSearch(
         addressesHangingPiece(state, action, currentKingdom, profile)
       );
     })
-    .slice(0, phase === "endgame" ? (currentKingdom === aiKingdom ? 12 : 8) : currentKingdom === aiKingdom ? 8 : 5);
+    .slice(0, qBeamLimit);
 
   if (!tacticalActions.length) {
     return standPat;
@@ -861,8 +969,12 @@ function quiescenceSearch(
 
     for (const action of tacticalActions) {
       const score = quiescenceSearch(applySearchMove(state, action.pieceId, action.target), aiKingdom, profile, aiStyle, context, qDepth + 1);
-
       best = Math.max(best, score);
+
+      // Prune: if we've already found a great move, no need to continue
+      if (best > standPat + 2000) {
+        break;
+      }
     }
 
     return best;
@@ -997,7 +1109,7 @@ function createSearchContext(options: AiMoveOptions): SearchContext {
     tt: new Map(),
     killerMoves: new Map(),
     history: new Map(),
-    maxQuiescenceDepth: options.maxQuiescenceDepth ?? (options.skillProfile === "fast" ? 1 : options.skillProfile === "tactical" ? 3 : 2),
+    maxQuiescenceDepth: options.maxQuiescenceDepth ?? (options.skillProfile === "fast" ? 2 : options.skillProfile === "tactical" ? 5 : 4),
     principalVariation: [],
   };
 }
@@ -1365,13 +1477,16 @@ function actionKey(action: AiMove): string {
 }
 
 function searchStateKey(state: GameState): string {
-  const pieces = state.pieces
-    .filter((piece) => piece.blocksMovement)
-    .map((piece) => `${piece.id}:${piece.position}:${piece.controller}:${piece.defeated ? 1 : 0}`)
-    .sort()
-    .join("|");
+  // Use a simpler key format that avoids sorting overhead
+  // Only include pieces that affect the game (block movement)
+  const parts: string[] = [state.currentKingdom, state.winner ?? "-", state.defeatedKingdoms.join("")];
 
-  return `${state.currentKingdom}:${state.winner ?? "none"}:${state.defeatedKingdoms.join(",")}|${pieces}`;
+  for (const piece of state.pieces) {
+    if (!piece.blocksMovement) continue;
+    parts.push(piece.id, piece.position, piece.controller[0], piece.defeated ? "1" : "0");
+  }
+
+  return parts.join("|");
 }
 
 function compareAction(left: AiMove, right: AiMove): number {
@@ -1385,4 +1500,45 @@ function seededRandom(initialSeed: number): () => number {
     seed = (seed * 1664525 + 1013904223) % 4294967296;
     return seed / 4294967296;
   };
+}
+
+function mvvLvaBonus(capturedPiece: Piece, movingPiece: Piece, profile: AiProfile): number {
+  const capturedValue = pieceValue(capturedPiece, profile);
+  const movingValue = pieceValue(movingPiece, profile);
+
+  if (movingValue >= capturedValue) {
+    return 0;
+  }
+
+  return Math.floor((capturedValue - movingValue) * 0.15);
+}
+
+function skipTurn(state: GameState): GameState | null {
+  const defeatedKingdoms = state.defeatedKingdoms;
+  const activeKingdoms = turnOrder.filter((kingdom) => !defeatedKingdoms.includes(kingdom));
+
+  if (activeKingdoms.length <= 1) {
+    return null;
+  }
+
+  const nextKingdom = nextActiveKingdom(state.currentKingdom, defeatedKingdoms);
+  const nextNextKingdom = nextActiveKingdom(nextKingdom, defeatedKingdoms);
+
+  return {
+    ...state,
+    currentKingdom: nextNextKingdom,
+    _positionMap: undefined,
+  };
+}
+
+function hasEnoughMaterialForNullMove(state: GameState, kingdom: Kingdom, profile: AiProfile): boolean {
+  // Don't null move if we only have pawns and a general — no pieces to "waste" a move
+  const ownPieces = state.pieces.filter(
+    (piece) => piece.controller === kingdom && piece.blocksMovement && !isNeutralBlocker(piece),
+  );
+  const majorPieces = ownPieces.filter(
+    (piece) => piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse",
+  );
+
+  return majorPieces.length >= 2;
 }
