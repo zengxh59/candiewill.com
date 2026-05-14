@@ -55,7 +55,7 @@ function simulateMove(state: GameState, pieceId: string, target: PointId): GameS
   const pieces = state.pieces
     .filter((p) => p.id === pieceId || !(p.position === target && p.blocksMovement))
     .map((p) => (p.id === pieceId ? { ...p, position: target } : p));
-  return { ...state, pieces };
+  return { ...state, pieces, _positionMap: undefined };
 }
 
 export function isKingdomInCheck(state: GameState, kingdom: Kingdom): boolean {
@@ -68,7 +68,7 @@ export function isKingdomInCheck(state: GameState, kingdom: Kingdom): boolean {
   return isSquareAttackedBy(state, general.position, kingdom);
 }
 
-function isSquareAttackedBy(state: GameState, square: PointId, ownKingdom: Kingdom): boolean {
+export function isSquareAttackedBy(state: GameState, square: PointId, ownKingdom: Kingdom): boolean {
   const isEnemy = (piece: Piece) =>
     piece.controller !== ownKingdom && piece.blocksMovement && !(piece.defeated && piece.controller === piece.kingdom);
   for (const line of movementLines) {

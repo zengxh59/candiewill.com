@@ -1,7 +1,7 @@
 import type { Kingdom, PointId } from "./board";
 import { kingdomOf, kingdomRows, parsePointId } from "./board";
 import { capturedPieceAt, type GameState } from "./game-state";
-import { getCheckedKingdoms, getLegalMoves, getPseudoLegalMoves } from "./moves";
+import { getCheckedKingdoms, getLegalMoves, getPseudoLegalMoves, isSquareAttackedBy } from "./moves";
 import { aiStyleForKingdom, defaultAiProfile, type AiProfile, type AiStyleProfile } from "./ai-profile";
 import type { Piece } from "./pieces";
 import { applyMove } from "./rules";
@@ -1136,9 +1136,7 @@ function openingRaidPenalty(
 }
 
 function isPointControlledByOpponent(state: GameState, point: PointId, kingdom: Kingdom): boolean {
-  return state.pieces.some((piece) => {
-    return piece.controller !== kingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getPseudoLegalMoves(state, piece).includes(point);
-  });
+  return isSquareAttackedBy(state, point, kingdom);
 }
 
 function isOpeningPhase(state: GameState): boolean {

@@ -29,6 +29,7 @@ export interface GameState {
   defeatedKingdoms: Kingdom[];
   options: GameOptions;
   moveHistory?: MoveRecord[];
+  _positionMap?: Map<PointId, Piece>;
 }
 
 export function createInitialGameState(
@@ -49,7 +50,19 @@ export function createInitialGameState(
 }
 
 export function pieceAt(state: GameState, point: PointId): Piece | null {
-  return state.pieces.find((piece) => piece.position === point && piece.blocksMovement) ?? null;
+  let map = state._positionMap;
+
+  if (!map) {
+    map = new Map<PointId, Piece>();
+    for (const piece of state.pieces) {
+      if (piece.blocksMovement) {
+        map.set(piece.position, piece);
+      }
+    }
+    (state as { _positionMap: Map<PointId, Piece> })._positionMap = map;
+  }
+
+  return map.get(point) ?? null;
 }
 
 export function updatePiecePosition(state: GameState, pieceId: string, target: PointId): GameState {
@@ -67,6 +80,7 @@ export function updatePiecePosition(state: GameState, pieceId: string, target: P
           position: target,
         };
       }),
+    _positionMap: undefined,
   };
 }
 

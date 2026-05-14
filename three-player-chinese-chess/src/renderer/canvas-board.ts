@@ -72,12 +72,14 @@ export function drawBoard(
 
   drawConnectionLines(ctx, geometry);
 
+  const viewRotation = uiState?.viewRotation;
+
   for (const board of boardRenderGroups) {
-    drawGridLabels(ctx, board.rotation, board.yLabels, geometry);
+    drawGridLabels(ctx, board.rotation, board.yLabels, geometry, viewRotation);
     drawRegionLabel(ctx, board, geometry, uiState);
   }
 
-  drawBoundaryLabels(ctx, geometry);
+  drawBoundaryLabels(ctx, geometry, viewRotation);
 
   if (state) {
     drawMoveHighlights(ctx, state, geometry);
@@ -207,6 +209,7 @@ function drawGridLabels(
   angle: number,
   yLabels: readonly string[],
   geometry: BoardGeometry,
+  viewRotation?: number,
 ): void {
   ctx.fillStyle = "#000";
   ctx.font = "22px Arial, sans-serif";
@@ -216,13 +219,13 @@ function drawGridLabels(
   xLabels.forEach((label, index) => {
     const base = localPoint(index, geometry.rows, geometry);
     const position = labelPoint({ x: base.x, y: base.y + 28 }, angle, geometry);
-    ctx.fillText(label, position.x, position.y);
+    drawUprightText(ctx, label, position, viewRotation);
   });
 
   yLabels.forEach((label, index) => {
     const base = localPoint(0, index, geometry);
     const position = labelPoint({ x: base.x - 30, y: base.y }, angle, geometry);
-    ctx.fillText(label, position.x, position.y);
+    drawUprightText(ctx, label, position, viewRotation);
   });
 }
 
@@ -269,15 +272,30 @@ function drawRegionLabel(
   ctx.font = `${isActive ? 40 : 34}px STKaiti, KaiTi, serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(board.region, position.x, position.y);
+  drawUprightText(ctx, board.region, position, uiState?.viewRotation);
 
   ctx.restore();
 }
 
-function drawVerticalText(ctx: CanvasRenderingContext2D, text: string, position: ScreenPoint, angle: number): void {
+function drawUprightText(ctx: CanvasRenderingContext2D, text: string, position: ScreenPoint, viewRotation?: number): void {
+  if (viewRotation) {
+    ctx.save();
+    ctx.translate(position.x, position.y);
+    ctx.rotate((-viewRotation * Math.PI) / 180);
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+  } else {
+    ctx.fillText(text, position.x, position.y);
+  }
+}
+
+function drawVerticalText(ctx: CanvasRenderingContext2D, text: string, position: ScreenPoint, angle: number, viewRotation?: number): void {
   ctx.save();
   ctx.translate(position.x, position.y);
   ctx.rotate(angle);
+  if (viewRotation) {
+    ctx.rotate((-viewRotation * Math.PI) / 180);
+  }
   ctx.fillStyle = "#000";
   ctx.font = "30px STKaiti, KaiTi, serif";
   ctx.textAlign = "center";
@@ -292,7 +310,7 @@ function drawVerticalText(ctx: CanvasRenderingContext2D, text: string, position:
   ctx.restore();
 }
 
-function drawBoundaryLabels(ctx: CanvasRenderingContext2D, geometry: BoardGeometry): void {
+function drawBoundaryLabels(ctx: CanvasRenderingContext2D, geometry: BoardGeometry, viewRotation?: number): void {
   for (const river of boundaryRivers) {
     const outerStart = pointIdPosition(river.outerEdge[0], geometry);
     const outerEnd = pointIdPosition(river.outerEdge[1], geometry);
@@ -304,7 +322,7 @@ function drawBoundaryLabels(ctx: CanvasRenderingContext2D, geometry: BoardGeomet
     const directionToInner = unitVector(position, innerMidpoint);
     const angle = Math.atan2(directionToInner.y, directionToInner.x) + Math.PI / 2;
 
-    drawVerticalText(ctx, river.label, position, angle);
+    drawVerticalText(ctx, river.label, position, angle, viewRotation);
   }
 }
 
