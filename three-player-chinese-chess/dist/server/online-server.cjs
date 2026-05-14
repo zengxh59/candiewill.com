@@ -4440,21 +4440,28 @@ function applyMove(state, pieceId, target) {
   const movedState = updatePiecePosition(state, pieceId, target);
   const captureDefeatedKingdom = capturedPiece?.type === "general" ? capturedPiece.kingdom : null;
   const captureResolved = resolveDefeatedKingdom(movedState, state.defeatedKingdoms, captureDefeatedKingdom, movingPiece.controller);
-  const checkmateDefeatedKingdoms = state.options.defeatCondition === "checkmate" ? getCheckmatedKingdoms(captureResolved.state, captureResolved.defeatedKingdoms) : [];
+  const checkmateDefeatedKingdoms = getCheckmatedKingdoms(captureResolved.state, captureResolved.defeatedKingdoms);
   const defeatResolved = checkmateDefeatedKingdoms.reduce((current, kingdom) => {
     return resolveDefeatedKingdom(current.state, current.defeatedKingdoms, kingdom, movingPiece.controller);
   }, captureResolved);
   const defeatedKingdoms = defeatResolved.defeatedKingdoms;
   const activeKingdoms = turnOrder.filter((kingdom) => !defeatedKingdoms.includes(kingdom));
   const winner = activeKingdoms.length === 1 ? activeKingdoms[0] : null;
+  let nextKingdom2 = winner ? state.currentKingdom : nextActiveKingdom(state.currentKingdom, defeatedKingdoms);
+  let stalemateSkipped = "";
+  if (!winner) {
+    const skipped = skipStalemateTurns(defeatResolved.state, nextKingdom2, defeatedKingdoms);
+    nextKingdom2 = skipped.nextKingdom;
+    stalemateSkipped = skipped.message;
+  }
   const nextState = {
     ...defeatResolved.state,
     selectedPieceId: null,
     legalMoves: [],
-    currentKingdom: winner ? state.currentKingdom : nextActiveKingdom(state.currentKingdom, defeatedKingdoms),
+    currentKingdom: nextKingdom2,
     winner,
     defeatedKingdoms,
-    lastMoveMessage: checkmateDefeatedKingdoms.length ? `${checkmateDefeatedKingdoms.map(kingdomName).join("\u3001")}\u51FA\u5C40` : capturedPiece ? `${kingdomName(movingPiece.controller)}\u5403\u6389${kingdomName(capturedPiece.kingdom)}${capturedPiece.label}` : null,
+    lastMoveMessage: checkmateDefeatedKingdoms.length ? `${checkmateDefeatedKingdoms.map(kingdomName).join("\u3001")}\u51FA\u5C40` : stalemateSkipped ? stalemateSkipped : capturedPiece ? `${kingdomName(movingPiece.controller)}\u5403\u6389${kingdomName(capturedPiece.kingdom)}${capturedPiece.label}` : null,
     moveHistory: [...state.moveHistory ?? [], moveRecord].slice(-24)
   };
   return {
@@ -4537,7 +4544,8 @@ function applyDefeatedPieceMode(state, defeatedKingdom, conqueror) {
     case "remove":
       return {
         ...state,
-        pieces: state.pieces.filter((piece2) => piece2.kingdom !== defeatedKingdom)
+        pieces: state.pieces.filter((piece2) => piece2.kingdom !== defeatedKingdom),
+        _positionMap: void 0
       };
     case "block":
       return {
@@ -4551,7 +4559,8 @@ function applyDefeatedPieceMode(state, defeatedKingdom, conqueror) {
             defeated: true,
             blocksMovement: true
           };
-        })
+        }),
+        _positionMap: void 0
       };
     case "takeover":
       return {
@@ -4566,7 +4575,8 @@ function applyDefeatedPieceMode(state, defeatedKingdom, conqueror) {
             defeated: true,
             blocksMovement: true
           };
-        })
+        }),
+        _positionMap: void 0
       };
   }
 }
@@ -4576,6 +4586,27 @@ function kingdomName(kingdom) {
     wu: "\u5434",
     shu: "\u8700"
   }[kingdom];
+}
+function skipStalemateTurns(state, startKingdom, defeatedKingdoms) {
+  const visited = /* @__PURE__ */ new Set();
+  let current = startKingdom;
+  const skipped = [];
+  while (!visited.has(current)) {
+    visited.add(current);
+    const pieces = state.pieces.filter(
+      (p) => p.controller === current && p.blocksMovement
+    );
+    const hasLegalMoves = pieces.some((p) => getLegalMoves(state, p).length > 0);
+    if (hasLegalMoves) {
+      break;
+    }
+    skipped.push(current);
+    current = nextActiveKingdom(current, defeatedKingdoms);
+  }
+  return {
+    nextKingdom: current,
+    message: skipped.length ? `${skipped.map(kingdomName).join("\u3001")}\u65E0\u5B50\u53EF\u52A8\uFF0C\u8DF3\u8FC7` : ""
+  };
 }
 
 // src/online/protocol.ts

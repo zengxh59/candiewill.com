@@ -1,11 +1,11 @@
 import "../styles.css";
 import type { Kingdom, PointId } from "../core/board";
-import { chooseAiMove, evaluateAiState, type AiMove, type AiMoveOptions } from "../core/ai";
-import { aiStyleForKingdom, defaultAiProfile, type AiProfile } from "../core/ai-profile";
-import { runAiBenchmark, tuneAiProfile } from "../core/ai-lab";
+import { chooseAiMove, type AiMove, type AiMoveOptions } from "../core/ai";
+import { aiStyleForKingdom, defaultAiProfile } from "../core/ai-profile";
 import {
   capturedPieceAt,
   createInitialGameState,
+  nextActiveKingdom,
   pieceAt,
   type DefeatedPieceMode,
   type GameOptions,
@@ -25,10 +25,6 @@ const startScreen = document.querySelector<HTMLElement>("#start-screen");
 const startButton = document.querySelector<HTMLButtonElement>("#start-game");
 const settingsButton = document.querySelector<HTMLButtonElement>("#show-settings");
 const undoButton = document.querySelector<HTMLButtonElement>("#undo-move");
-const aiStartLearningButton = document.querySelector<HTMLButtonElement>("#ai-start-learning");
-const aiDownloadLearningButton = document.querySelector<HTMLButtonElement>("#ai-download-learning");
-const aiLearningRoundsInput = document.querySelector<HTMLInputElement>("#ai-learning-rounds");
-const aiLearningOutput = document.querySelector<HTMLOutputElement>("#ai-learning-output");
 const onlineRoomCodeInput = document.querySelector<HTMLInputElement>("#online-room-code");
 const onlineRoomOutput = document.querySelector<HTMLOutputElement>("#online-room-output");
 const confirmDialog = document.querySelector<HTMLDivElement>("#confirm-dialog");
@@ -44,10 +40,6 @@ if (
   !startButton ||
   !settingsButton ||
   !undoButton ||
-  !aiStartLearningButton ||
-  !aiDownloadLearningButton ||
-  !aiLearningRoundsInput ||
-  !aiLearningOutput ||
   !onlineRoomCodeInput ||
   !onlineRoomOutput ||
   !confirmDialog ||
@@ -59,10 +51,8 @@ if (
   throw new Error("Board canvas was not found.");
 }
 
-type GameMode = "ai" | "online" | "ai-learning";
+type GameMode = "ai" | "online";
 type AiDifficulty = "easy" | "medium" | "hard";
-type LearningIntensity = "fast" | "normal" | "deep";
-type LearningEndReason = "winner" | "timeout" | "repetition" | "ply-limit" | "no-move";
 
 interface StartSettings {
   gameMode: GameMode;
@@ -70,58 +60,7 @@ interface StartSettings {
   options: GameOptions;
 }
 
-interface LearningConfig {
-  depth: number;
-  openingDepth: number;
-  timeBudgetMs: number;
-  tuneIterations: number;
-  timeLimitMs: number;
-  moveDelayMs: number;
-  maxPlies: number;
-  explorationRate: number;
-  explorationTop: number;
-  explorationSlack: number;
-  explorationTemperature: number;
-}
-
-interface LearningRoundRecord {
-  round: number;
-  winner: Kingdom;
-  reason: LearningEndReason;
-  plies: number;
-  durationMs: number;
-  baselineScore: number;
-  candidateScore: number;
-  gain: number;
-  applied: boolean;
-  scenario: string;
-  styles: Record<Kingdom, string>;
-  timeBudgetMs: number;
-  repetitions: number;
-  benchmarkSummary: string;
-  rejectedCandidates: number;
-  moves: string[];
-}
-
-interface LearningSession {
-  totalRounds: number;
-  intensity: LearningIntensity;
-  config: LearningConfig;
-  currentRound: number;
-  startedAt: number;
-  roundStartedAt: number;
-  plies: number;
-  records: LearningRoundRecord[];
-  moves: string[];
-  positions: Map<string, number>;
-  maxRepetition: number;
-  isTuning: boolean;
-  random: () => number;
-}
-
 const humanKingdom: Kingdom = "wei";
-const aiProfileStorageKey = "three-player-chinese-chess.ai-profile";
-const aiLearningHistoryStorageKey = "three-player-chinese-chess.ai-learning-history";
 let currentGameMode: GameMode = "ai";
 let currentAiDifficulty: AiDifficulty = "medium";
 let aiTimer: number | null = null;
@@ -130,8 +69,6 @@ let isAnimating = false;
 let thinkingPhase = 0;
 let thinkingFrame: number | null = null;
 let currentAnimation: BoardAnimation | null = null;
-let activeAiProfile = readStoredAiProfile();
-let learningSession: LearningSession | null = null;
 let undoSnapshot: GameState | null = null;
 let onlineSocket: WebSocket | null = null;
 let onlineHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -161,16 +98,6 @@ function render(): void {
 
 function renderStatus(): void {
   status!.replaceChildren();
-  if (learningSession) {
-    const roundText = `自学习 ${learningSession.currentRound}/${learningSession.totalRounds}`;
-    const stateText = learningSession.isTuning
-      ? "回归调参中"
-      : state.winner
-      ? `胜者：${kingdomName(state.winner)}`
-      : state.lastMoveMessage ?? "自动对弈开始";
-    status!.append(createMessage(`${roundText} · ${stateText}`, "last-move"));
-    return;
-  }
 
   if (currentGameMode === "online" && onlineSnapshot) {
     const seatText = onlineSnapshot.role === "player" && onlineSnapshot.seat ? `你执${kingdomName(onlineSnapshot.seat)}` : "观战中";
@@ -265,7 +192,6 @@ canvas.addEventListener("click", (event) => {
 startButton.addEventListener("click", () => {
   clearAiTimer();
   stopThinkingLoop();
-  stopLearningSession();
   const settings = readStartSettings();
   currentGameMode = settings.gameMode;
 
@@ -275,7 +201,6 @@ startButton.addEventListener("click", () => {
   }
 
   currentAiDifficulty = settings.aiDifficulty;
-  activeAiProfile = profileForIntensity(intensityForDifficulty(settings.aiDifficulty));
   isAnimating = false;
   currentAnimation = null;
   undoSnapshot = null;
@@ -298,7 +223,6 @@ settingsButton.addEventListener("click", () => {
   leaveOnlineRoom();
   clearAiTimer();
   stopThinkingLoop();
-  stopLearningSession();
   isAiThinking = false;
   isAnimating = false;
   currentAnimation = null;
@@ -309,14 +233,6 @@ settingsButton.addEventListener("click", () => {
 
 undoButton.addEventListener("click", () => {
   undoLastPlayerMove();
-});
-
-aiStartLearningButton.addEventListener("click", () => {
-  startLearningSession();
-});
-
-aiDownloadLearningButton.addEventListener("click", () => {
-  downloadLearningData();
 });
 
 onlineRoomCodeInput.addEventListener("input", () => {
@@ -343,7 +259,6 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-syncLearningDownloadButton();
 render();
 
 function readStartSettings(): StartSettings {
@@ -401,7 +316,7 @@ function scheduleAiTurn(): void {
   isAiThinking = true;
   startThinkingLoop();
   render();
-  aiTimer = window.setTimeout(runAiTurn, learningSession?.config.moveDelayMs ?? 650);
+  aiTimer = window.setTimeout(runAiTurn, 650);
 }
 
 async function runAiTurn(): Promise<void> {
@@ -413,44 +328,32 @@ async function runAiTurn(): Promise<void> {
   }
 
   const kingdom = state.currentKingdom;
-  const moveOptions = learningSession
-    ? aiLearningMoveOptions(kingdom, learningSession)
-    : aiMoveOptionsForDifficulty(currentAiDifficulty, kingdom);
-  const move = await requestAiMove(state, kingdom, activeAiProfile, moveOptions);
+  const moveOptions = aiMoveOptionsForDifficulty(currentAiDifficulty, kingdom);
+  const move = await requestAiMove(state, kingdom, moveOptions);
 
   if (!move) {
     isAiThinking = false;
     stopThinkingLoop();
-    if (learningSession) {
-      await finishLearningRound("no-move");
-      return;
-    }
 
     state = {
       ...state,
       lastMoveMessage: `${kingdomName(kingdom)}暂无可行棋子`,
+      currentKingdom: nextActiveKingdom(kingdom, state.defeatedKingdoms),
     };
     render();
+    scheduleAiTurn();
     return;
   }
 
   isAiThinking = false;
   stopThinkingLoop();
   await commitMove(move.pieceId, move.target, kingdom, "AI");
-
-  if (learningSession) {
-    learningSession.plies += 1;
-    learningSession.moves.push(formatMoveLog(kingdom, move));
-    await handleLearningMoveCompleted();
-    return;
-  }
-
   scheduleAiTurn();
 }
 
-function requestAiMove(sourceState: GameState, kingdom: Kingdom, profile: AiProfile, options: AiMoveOptions): Promise<AiMove | null> {
+function requestAiMove(sourceState: GameState, kingdom: Kingdom, options: AiMoveOptions): Promise<AiMove | null> {
   if (typeof Worker === "undefined") {
-    return Promise.resolve(chooseAiMove(sourceState, kingdom, profile, options));
+    return Promise.resolve(chooseAiMove(sourceState, kingdom, defaultAiProfile, options));
   }
 
   const requestId = Date.now() + Math.floor(Math.random() * 100_000);
@@ -472,20 +375,20 @@ function requestAiMove(sourceState: GameState, kingdom: Kingdom, profile: AiProf
       resolve(move);
     };
     timeout = window.setTimeout(() => {
-      finish(chooseAiMove(sourceState, kingdom, profile, { ...options, timeBudgetMs: Math.min(120, options.timeBudgetMs ?? 120) }));
+      finish(chooseAiMove(sourceState, kingdom, defaultAiProfile, { ...options, timeBudgetMs: Math.min(120, options.timeBudgetMs ?? 120) }));
     }, timeoutMs);
 
     try {
       worker = new Worker(new URL("./ai-worker.ts", import.meta.url), { type: "module" });
     } catch {
       window.clearTimeout(timeout);
-      resolve(chooseAiMove(sourceState, kingdom, profile, options));
+      resolve(chooseAiMove(sourceState, kingdom, defaultAiProfile, options));
       return;
     }
 
     if (!worker) {
       window.clearTimeout(timeout);
-      resolve(chooseAiMove(sourceState, kingdom, profile, options));
+      resolve(chooseAiMove(sourceState, kingdom, defaultAiProfile, options));
       return;
     }
 
@@ -494,16 +397,16 @@ function requestAiMove(sourceState: GameState, kingdom: Kingdom, profile: AiProf
         return;
       }
 
-      finish(event.data.error ? chooseAiMove(sourceState, kingdom, profile, { ...options, timeBudgetMs: 180 }) : event.data.move);
+      finish(event.data.error ? chooseAiMove(sourceState, kingdom, defaultAiProfile, { ...options, timeBudgetMs: 180 }) : event.data.move);
     });
     worker.addEventListener("error", () => {
-      finish(chooseAiMove(sourceState, kingdom, profile, { ...options, timeBudgetMs: 180 }));
+      finish(chooseAiMove(sourceState, kingdom, defaultAiProfile, { ...options, timeBudgetMs: 180 }));
     });
     worker.postMessage({
       id: requestId,
       state: sourceState,
       kingdom,
-      profile,
+      profile: defaultAiProfile,
       options,
     });
   });
@@ -620,7 +523,7 @@ function playMoveAnimation(movingPiece: Piece, capturedPiece: Piece | null, targ
 
   const from = pointIdPosition(movingPiece.position, defaultGeometry);
   const to = pointIdPosition(target, defaultGeometry);
-  const duration = learningSession ? (capturedPiece ? 80 : 56) : capturedPiece ? 820 : 680;
+  const duration = capturedPiece ? 820 : 680;
 
   return new Promise((resolve) => {
     const startedAt = performance.now();
@@ -753,10 +656,6 @@ function stopThinkingLoop(): void {
 function isAiTurn(): boolean {
   if (state.winner || !startScreen!.classList.contains("is-hidden")) {
     return false;
-  }
-
-  if (currentGameMode === "ai-learning") {
-    return learningSession !== null && !learningSession.isTuning;
   }
 
   return currentGameMode === "ai" && state.currentKingdom !== humanKingdom;
@@ -1002,7 +901,6 @@ function resetOnlineSession(): void {
 function resetToStartScreen(): void {
   clearAiTimer();
   stopThinkingLoop();
-  stopLearningSession();
   isAiThinking = false;
   isAnimating = false;
   currentAnimation = null;
@@ -1057,299 +955,6 @@ function onlineWebSocketUrl(pathSuffix = ""): string {
   return `${protocol}//${window.location.hostname}${devPort ? `:${devPort}` : ""}/ws${pathSuffix}`;
 }
 
-function startLearningSession(): void {
-  clearAiTimer();
-  stopThinkingLoop();
-
-  const totalRounds = clampNumber(Number(aiLearningRoundsInput!.value || 10), 1, 200);
-  const intensity = readLearningIntensity();
-
-  currentGameMode = "ai-learning";
-  isAiThinking = false;
-  isAnimating = false;
-  currentAnimation = null;
-  aiStartLearningButton!.disabled = true;
-  learningSession = {
-    totalRounds,
-    intensity,
-    config: learningConfig(intensity),
-    currentRound: 0,
-    startedAt: performance.now(),
-    roundStartedAt: performance.now(),
-    plies: 0,
-    records: [],
-    moves: [],
-    positions: new Map(),
-    maxRepetition: 0,
-    isTuning: false,
-    random: seededRandom(Date.now() % 4294967296),
-  };
-  aiLearningOutput!.textContent = `AI自动对弈自我提升已启动：${totalRounds}轮，${learningIntensityName(intensity)}。`;
-  startScreen!.classList.add("is-hidden");
-  startLearningRound();
-}
-
-function stopLearningSession(): void {
-  if (!learningSession) {
-    aiStartLearningButton!.disabled = false;
-    return;
-  }
-
-  persistLearningHistory(learningSession);
-  learningSession = null;
-  aiStartLearningButton!.disabled = false;
-}
-
-function startLearningRound(): void {
-  const session = learningSession;
-
-  if (!session) {
-    return;
-  }
-
-  if (session.currentRound >= session.totalRounds) {
-    finishLearningSession();
-    return;
-  }
-
-  session.currentRound += 1;
-  session.roundStartedAt = performance.now();
-  session.plies = 0;
-  session.moves = [];
-  session.positions = new Map();
-  session.maxRepetition = 0;
-  session.isTuning = false;
-  state = createInitialGameState({ defeatCondition: "capture", defeatedPieceMode: "block" });
-  state = {
-    ...state,
-    checkedKingdoms: getCheckedKingdoms(state),
-    lastMoveMessage: `第${session.currentRound}轮自动对弈开始`,
-  };
-  render();
-  scheduleAiTurn();
-}
-
-async function handleLearningMoveCompleted(): Promise<void> {
-  const session = learningSession;
-
-  if (!session) {
-    return;
-  }
-
-  const elapsed = performance.now() - session.roundStartedAt;
-  const key = boardStateKey();
-  const repetition = (session.positions.get(key) ?? 0) + 1;
-
-  session.positions.set(key, repetition);
-  session.maxRepetition = Math.max(session.maxRepetition, repetition);
-
-  if (state.winner) {
-    await finishLearningRound("winner");
-    return;
-  }
-
-  if (elapsed >= session.config.timeLimitMs) {
-    await finishLearningRound("timeout");
-    return;
-  }
-
-  if (repetition >= 3) {
-    await finishLearningRound("repetition");
-    return;
-  }
-
-  if (session.plies >= session.config.maxPlies) {
-    await finishLearningRound("ply-limit");
-    return;
-  }
-
-  scheduleAiTurn();
-}
-
-async function finishLearningRound(reason: LearningEndReason): Promise<void> {
-  const session = learningSession;
-
-  if (!session) {
-    return;
-  }
-
-  clearAiTimer();
-  isAiThinking = false;
-  stopThinkingLoop();
-
-  const winner = state.winner ?? adjudicateLearningWinner();
-  state = {
-    ...state,
-    winner,
-    selectedPieceId: null,
-    legalMoves: [],
-    lastMoveMessage:
-      reason === "winner"
-        ? `第${session.currentRound}轮结束：${kingdomName(winner)}获胜`
-        : `第${session.currentRound}轮${learningEndReasonName(reason)}，裁定${kingdomName(winner)}获胜`,
-  };
-  session.isTuning = true;
-  render();
-  await nextFrame();
-
-  const baseline = runAiBenchmark(activeAiProfile);
-  const result = tuneAiProfile(activeAiProfile, {
-    iterations: session.config.tuneIterations,
-    seed: Math.floor((Date.now() + session.currentRound * 9973) % 4294967296),
-    benchmark: {
-      selfPlayGames: session.intensity === "deep" ? 12 : session.intensity === "normal" ? 9 : 6,
-      maxPlies: session.config.maxPlies,
-    },
-  });
-  const gain = result.report.score - baseline.score;
-  const applied = gain >= 0 && result.report.scenario.failures.length === 0;
-
-  if (applied) {
-    activeAiProfile = result.profile;
-    window.localStorage.setItem(aiProfileStorageKey, JSON.stringify(activeAiProfile));
-  }
-
-  session.records.push({
-    round: session.currentRound,
-    winner,
-    reason,
-    plies: session.plies,
-    durationMs: Math.round(performance.now() - session.roundStartedAt),
-    baselineScore: baseline.score,
-    candidateScore: result.report.score,
-    gain,
-    applied,
-    scenario: `${result.report.scenario.passed}/${result.report.scenario.total}`,
-    styles: learningStyleLabels(),
-    timeBudgetMs: session.config.timeBudgetMs,
-    repetitions: session.maxRepetition,
-    benchmarkSummary: benchmarkSummary(result.report),
-    rejectedCandidates: result.rejected.length,
-    moves: [...session.moves],
-  });
-  persistLearningHistory(session);
-  aiLearningOutput!.textContent = formatLearningProgress(session);
-  session.isTuning = false;
-  render();
-  window.setTimeout(startLearningRound, 160);
-}
-
-function finishLearningSession(): void {
-  const session = learningSession;
-
-  if (!session) {
-    return;
-  }
-
-  persistLearningHistory(session);
-  aiLearningOutput!.textContent = formatLearningProgress(session, true);
-  learningSession = null;
-  aiStartLearningButton!.disabled = false;
-  currentGameMode = "ai";
-  startScreen!.classList.remove("is-hidden");
-  render();
-}
-
-function readLearningIntensity(): LearningIntensity {
-  const selected = document.querySelector<HTMLInputElement>("input[name='ai-learning-intensity']:checked");
-
-  return (selected?.value ?? "normal") as LearningIntensity;
-}
-
-function learningConfig(intensity: LearningIntensity): LearningConfig {
-  activeAiProfile = profileForIntensity(intensity);
-
-  switch (intensity) {
-    case "fast":
-      return {
-        depth: 1,
-        openingDepth: 1,
-        timeBudgetMs: 500,
-        tuneIterations: 6,
-        timeLimitMs: 2 * 60 * 1000,
-        moveDelayMs: 10,
-        maxPlies: 180,
-        explorationRate: 0.48,
-        explorationTop: 8,
-        explorationSlack: 1_300,
-        explorationTemperature: 820,
-      };
-    case "deep":
-      return {
-        depth: 3,
-        openingDepth: 2,
-        timeBudgetMs: 1_800,
-        tuneIterations: 18,
-        timeLimitMs: 5 * 60 * 1000,
-        moveDelayMs: 24,
-        maxPlies: 300,
-        explorationRate: 0.3,
-        explorationTop: 5,
-        explorationSlack: 850,
-        explorationTemperature: 520,
-      };
-    case "normal":
-      return {
-        depth: 2,
-        openingDepth: 1,
-        timeBudgetMs: 1_000,
-        tuneIterations: 10,
-        timeLimitMs: 3 * 60 * 1000,
-        moveDelayMs: 16,
-        maxPlies: 240,
-        explorationRate: 0.38,
-        explorationTop: 6,
-        explorationSlack: 1_050,
-        explorationTemperature: 660,
-      };
-  }
-}
-
-function profileForIntensity(intensity: LearningIntensity): AiProfile {
-  const base = cloneAiProfile(readStoredAiProfile());
-
-  switch (intensity) {
-    case "fast":
-      return {
-        ...base,
-        searchDepth: 1,
-        rootBeam: 8,
-        responseBeam: 3,
-        thirdPlayerBeam: 2,
-        safetyScanLimit: 14,
-      };
-    case "deep":
-      return {
-        ...base,
-        searchDepth: 3,
-        rootBeam: 16,
-        responseBeam: 6,
-        thirdPlayerBeam: 4,
-        safetyScanLimit: 24,
-      };
-    case "normal":
-      return {
-        ...base,
-        searchDepth: 2,
-        rootBeam: 12,
-        responseBeam: 5,
-        thirdPlayerBeam: 3,
-        safetyScanLimit: 18,
-      };
-  }
-}
-
-function intensityForDifficulty(difficulty: AiDifficulty): LearningIntensity {
-  switch (difficulty) {
-    case "easy":
-      return "fast";
-    case "hard":
-      return "deep";
-    case "medium":
-      return "normal";
-  }
-}
-
 function aiMoveOptionsForDifficulty(difficulty: AiDifficulty, kingdom: Kingdom): AiMoveOptions {
   switch (difficulty) {
     case "easy":
@@ -1383,229 +988,4 @@ function aiMoveOptionsForDifficulty(difficulty: AiDifficulty, kingdom: Kingdom):
         openingThirdPlayerBeam: 1,
       };
   }
-}
-
-function aiLearningMoveOptions(kingdom: Kingdom, session: LearningSession): AiMoveOptions {
-  return {
-    style: aiStyleForKingdom(kingdom),
-    seed: Math.floor(session.random() * 4294967296),
-    timeBudgetMs: session.config.timeBudgetMs,
-    maxDepth: session.config.depth,
-    explorationRate: session.config.explorationRate,
-    explorationTop: session.config.explorationTop,
-    explorationSlack: session.config.explorationSlack,
-    explorationTemperature: session.config.explorationTemperature,
-    openingSearchDepth: session.config.openingDepth,
-  };
-}
-
-function difficultyForIntensity(intensity: LearningIntensity): AiDifficulty {
-  switch (intensity) {
-    case "fast":
-      return "easy";
-    case "deep":
-      return "hard";
-    case "normal":
-      return "medium";
-  }
-}
-
-function adjudicateLearningWinner(): Kingdom {
-  const kingdoms: Kingdom[] = ["wei", "shu", "wu"];
-  const activeKingdoms = kingdoms.filter((kingdom) => !state.defeatedKingdoms.includes(kingdom));
-  const candidates = activeKingdoms.length ? activeKingdoms : kingdoms;
-
-  return candidates
-    .map((kingdom) => ({ kingdom, score: evaluateAiState(state, kingdom, activeAiProfile) }))
-    .sort((left, right) => right.score - left.score || left.kingdom.localeCompare(right.kingdom))[0].kingdom;
-}
-
-function boardStateKey(): string {
-  const pieces = state.pieces
-    .filter((piece) => piece.blocksMovement)
-    .map((piece) => `${piece.id}:${piece.position}:${piece.controller}:${piece.defeated ? 1 : 0}`)
-    .sort()
-    .join("|");
-
-  return `${state.currentKingdom}|${pieces}`;
-}
-
-function formatMoveLog(kingdom: Kingdom, move: AiMove): string {
-  const movedPiece = state.pieces.find((piece) => piece.id === move.pieceId);
-
-  return `${kingdomName(kingdom)}${movedPiece?.label ?? "棋"} ${move.from}-${move.target}`;
-}
-
-function formatLearningProgress(session: LearningSession, done = false): string {
-  const last = session.records.at(-1);
-  const winners = session.records.reduce<Record<Kingdom, number>>(
-    (current, record) => {
-      current[record.winner] += 1;
-      return current;
-    },
-    { wei: 0, shu: 0, wu: 0 },
-  );
-  const summary = [
-    done ? "AI自动对弈自我提升完成" : `第${last?.round ?? session.currentRound}轮已完成`,
-    `进度：${session.records.length}/${session.totalRounds}轮`,
-    `强度：${learningIntensityName(session.intensity)}，搜索深度：${session.config.depth}，开局深度：${session.config.openingDepth}`,
-    `胜者统计：魏 ${winners.wei} / 蜀 ${winners.shu} / 吴 ${winners.wu}`,
-  ];
-
-  if (last) {
-    summary.push(
-      `最近一轮：${kingdomName(last.winner)}获胜，${learningEndReasonName(last.reason)}，${last.plies}步，调参${last.applied ? "已导入" : "未导入"}，评分变化 ${last.gain}`,
-      `回归场景：${last.scenario}`,
-      `自博弈：${last.benchmarkSummary}`,
-    );
-  }
-
-  summary.push(`学习记录已保存：localStorage.${aiLearningHistoryStorageKey}`);
-
-  return summary.join("\n");
-}
-
-function learningStyleLabels(): Record<Kingdom, string> {
-  return {
-    wei: aiStyleForKingdom("wei").label,
-    shu: aiStyleForKingdom("shu").label,
-    wu: aiStyleForKingdom("wu").label,
-  };
-}
-
-function benchmarkSummary(report: ReturnType<typeof runAiBenchmark>): string {
-  return [
-    `${report.selfPlay.games}局`,
-    `自然胜${report.selfPlay.naturalWins}`,
-    `重复${report.selfPlay.repetitionStops}`,
-    `多样性${report.selfPlay.openingDiversity}`,
-    `安全${report.selfPlay.averageSafety}`,
-  ].join(" / ");
-}
-
-function persistLearningHistory(session: LearningSession): void {
-  const payload = {
-    savedAt: new Date().toISOString(),
-    totalRounds: session.totalRounds,
-    completedRounds: session.records.length,
-    intensity: session.intensity,
-    difficulty: difficultyForIntensity(session.intensity),
-    config: session.config,
-    records: session.records,
-    profile: activeAiProfile,
-  };
-
-  window.localStorage.setItem(aiLearningHistoryStorageKey, JSON.stringify(payload));
-  syncLearningDownloadButton();
-}
-
-function syncLearningDownloadButton(): void {
-  aiDownloadLearningButton!.disabled = !window.localStorage.getItem(aiLearningHistoryStorageKey);
-}
-
-function downloadLearningData(): void {
-  const storedHistory = window.localStorage.getItem(aiLearningHistoryStorageKey);
-
-  if (!storedHistory) {
-    aiLearningOutput!.textContent = "暂无可下载的自学习数据。请先完成至少一轮自学习。";
-    syncLearningDownloadButton();
-    return;
-  }
-
-  let parsedHistory: { savedAt?: string };
-
-  try {
-    parsedHistory = JSON.parse(storedHistory) as { savedAt?: string };
-  } catch {
-    window.localStorage.removeItem(aiLearningHistoryStorageKey);
-    aiLearningOutput!.textContent = "自学习数据已损坏，已清除。请重新运行自学习。";
-    syncLearningDownloadButton();
-    return;
-  }
-
-  const savedAt = parsedHistory.savedAt ?? new Date().toISOString();
-  const filename = `three-player-chess-ai-learning-${savedAt.replace(/[:.]/g, "-")}.json`;
-  const blob = new Blob([`${JSON.stringify(parsedHistory, null, 2)}\n`], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = filename;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-  aiLearningOutput!.textContent = `学习数据已生成下载文件：${filename}\n建议保存到项目目录 ai-learning-exports/，后续可以把该 JSON 提供给我继续迭代。`;
-}
-
-function learningIntensityName(intensity: LearningIntensity): string {
-  return {
-    fast: "简单（快速）",
-    normal: "中等（常规）",
-    deep: "困难（深度）",
-  }[intensity];
-}
-
-function learningEndReasonName(reason: LearningEndReason): string {
-  return {
-    winner: "正常胜负",
-    timeout: "超时",
-    repetition: "重复局面",
-    "ply-limit": "步数过长",
-    "no-move": "无可行棋",
-  }[reason];
-}
-
-function clampNumber(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) {
-    return min;
-  }
-
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-function seededRandom(initialSeed: number): () => number {
-  let seed = initialSeed;
-
-  return () => {
-    seed = (seed * 1664525 + 1013904223) % 4294967296;
-    return seed / 4294967296;
-  };
-}
-
-function readStoredAiProfile(): AiProfile {
-  const storedProfile = window.localStorage.getItem(aiProfileStorageKey);
-
-  if (!storedProfile) {
-    return cloneAiProfile(defaultAiProfile);
-  }
-
-  try {
-    const baseProfile = cloneAiProfile(defaultAiProfile);
-    const parsedProfile = JSON.parse(storedProfile) as Partial<AiProfile>;
-
-    return {
-      ...baseProfile,
-      ...parsedProfile,
-      pieceValues: {
-        ...baseProfile.pieceValues,
-        ...parsedProfile.pieceValues,
-      },
-      scoring: {
-        ...baseProfile.scoring,
-        ...parsedProfile.scoring,
-      },
-    };
-  } catch {
-    window.localStorage.removeItem(aiProfileStorageKey);
-    return cloneAiProfile(defaultAiProfile);
-  }
-}
-
-function cloneAiProfile(profile: AiProfile): AiProfile {
-  return JSON.parse(JSON.stringify(profile)) as AiProfile;
-}
-
-function nextFrame(): Promise<void> {
-  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 }

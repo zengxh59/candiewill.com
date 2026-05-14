@@ -99,33 +99,6 @@
             </label>
           </fieldset>
         </details>
-        <details class="ai-learning-details">
-          <summary>AI自学习</summary>
-          <div class="ai-learning-form">
-            <label class="learning-field">
-              <span>对弈轮数</span>
-              <input id="ai-learning-rounds" type="number" min="1" max="200" value="10" inputmode="numeric" />
-            </label>
-            <fieldset class="learning-intensity">
-              <legend>思考强度</legend>
-              <label>
-                <input type="radio" name="ai-learning-intensity" value="fast" />
-                <span>简单·快速</span>
-              </label>
-              <label>
-                <input type="radio" name="ai-learning-intensity" value="normal" checked />
-                <span>中等·常规</span>
-              </label>
-              <label>
-                <input type="radio" name="ai-learning-intensity" value="deep" />
-                <span>困难·深度</span>
-              </label>
-            </fieldset>
-          </div>
-          <button id="ai-start-learning" class="ai-learning-start" type="button">启动自学习</button>
-          <button id="ai-download-learning" class="ai-learning-download" type="button" disabled>下载学习数据</button>
-          <output id="ai-learning-output" class="ai-learning-output">自动对弈会进入棋盘，由 AI 控制魏、蜀、吴三国。浏览器会保存学习记录；长期写回源码请运行 npm run ai:learn:loop。</output>
-        </details>
       </div>
     </section>
     <main class="app-shell">

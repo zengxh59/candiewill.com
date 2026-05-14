@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GameState } from "./game-state";
 import { createInitialGameState } from "./game-state";
-import { getCheckedKingdoms, getLegalMoves } from "./moves";
+import { getCheckedKingdoms, getLegalMoves, getPseudoLegalMoves } from "./moves";
 import type { Piece } from "./pieces";
 import { applyMove, resignKingdom } from "./rules";
 
@@ -185,7 +185,7 @@ describe("turns, checks, and wins", () => {
     expect(next.pieces.some((item) => item.kingdom === "wu")).toBe(false);
   });
 
-  it("does not defeat a checked kingdom by checkmate when capture condition is selected", () => {
+  it("defeats a checkmated kingdom even when capture condition is selected", () => {
     const state = {
       ...stateWith([
         piece("wei-chariot", "chariot", "车", "A4", "wei"),
@@ -197,8 +197,7 @@ describe("turns, checks, and wins", () => {
     };
     const next = applyMove(state, "wei-chariot", "A5");
 
-    expect(next.defeatedKingdoms).toEqual([]);
-    expect(next.checkedKingdoms).toEqual(["wu"]);
+    expect(next.defeatedKingdoms).toEqual(["wu"]);
   });
 
   it("defeats the resigning kingdom and advances its turn", () => {
@@ -265,3 +264,122 @@ function piece(
     blocksMovement: true,
   };
 }
+
+describe("checkmate detection regression", () => {
+  it("defeats kingdom by checkmate and advances turn correctly", () => {
+    const state = {
+      ...stateWith([
+        piece("wei-chariot", "chariot", "车", "A4", "wei"),
+        piece("wei-general", "general", "魏", "E4", "wei"),
+        piece("wu-general", "general", "吴", "F5", "wu"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ]),
+      options: { defeatedPieceMode: "remove" as const, defeatCondition: "capture" as const },
+    };
+    const next = applyMove(state, "wei-chariot", "A5");
+
+    expect(next.defeatedKingdoms).toContain("wu");
+    expect(next.currentKingdom).toBe("shu");
+    expect(next.winner).toBeNull();
+    expect(next.lastMoveMessage).toContain("出局");
+  });
+
+  it("declares winner when only one kingdom remains after checkmate", () => {
+    const state = {
+      ...stateWith([
+        piece("wei-chariot", "chariot", "车", "A4", "wei"),
+        piece("wei-general", "general", "魏", "E4", "wei"),
+        piece("wu-general", "general", "吴", "F5", "wu"),
+        piece("shu-general", "general", "蜀", "O4", "shu"),
+      ]),
+      options: { defeatedPieceMode: "remove" as const, defeatCondition: "capture" as const },
+      defeatedKingdoms: ["shu" as const],
+    };
+    const next = applyMove(state, "wei-chariot", "A5");
+
+    expect(next.defeatedKingdoms).toContain("wu");
+    expect(next.winner).toBe("wei");
+  });
+});
+
+describe("legal move check filtering", () => {
+  it("does not allow moving a blocking piece when it exposes the general", () => {
+    const state = stateWith([
+      piece("wei-general", "general", "魏", "E5", "wei"),
+      piece("wei-advisor", "advisor", "士", "D5", "wei"),
+      piece("shu-chariot", "chariot", "车", "A5", "shu"),
+      piece("shu-general", "general", "蜀", "O4", "shu"),
+      piece("wu-general", "general", "吴", "J4", "wu"),
+    ]);
+    const advisor = state.pieces.find((p) => p.id === "wei-advisor")!;
+
+    expect(getLegalMoves(state, advisor)).not.toContain("C4");
+  });
+
+  it("does not allow exposing general to flying general", () => {
+    const state = stateWith([
+      piece("wei-general", "general", "魏", "E5", "wei"),
+      piece("wei-advisor", "advisor", "士", "E4", "wei"),
+      piece("shu-general", "general", "蜀", "O5", "shu"),
+      piece("wu-general", "general", "吴", "J4", "wu"),
+    ]);
+    const advisor = state.pieces.find((p) => p.id === "wei-advisor")!;
+
+    expect(getLegalMoves(state, advisor)).not.toContain("D3");
+  });
+
+  it("allows blocking check with another piece", () => {
+    const state = stateWith([
+      piece("wei-general", "general", "魏", "E5", "wei"),
+      piece("wei-chariot", "chariot", "车", "D1", "wei"),
+      piece("shu-chariot", "chariot", "车", "A5", "shu"),
+      piece("shu-general", "general", "蜀", "O4", "shu"),
+      piece("wu-general", "general", "吴", "J4", "wu"),
+    ]);
+    const chariot = state.pieces.find((p) => p.id === "wei-chariot")!;
+    const general = state.pieces.find((p) => p.id === "wei-general")!;
+
+    expect(getCheckedKingdoms(state)).toContain("wei");
+    expect(getLegalMoves(state, chariot)).toContain("D5");
+    expect(getLegalMoves(state, general).length).toBeGreaterThan(0);
+  });
+
+  it("allows non-checked kingdom to move freely", () => {
+    const state = stateWith([
+      piece("wei-general", "general", "魏", "E5", "wei"),
+      piece("shu-chariot", "chariot", "车", "A5", "shu"),
+      piece("shu-general", "general", "蜀", "O4", "shu"),
+      piece("wu-general", "general", "吴", "J4", "wu"),
+      piece("wu-chariot", "chariot", "车", "J1", "wu"),
+    ]);
+    const wuTurnState: GameState = { ...state, currentKingdom: "wu", checkedKingdoms: getCheckedKingdoms(state) };
+    const wuChariot = wuTurnState.pieces.find((p) => p.id === "wu-chariot")!;
+
+    expect(getCheckedKingdoms(state)).toEqual(["wei"]);
+    expect(getLegalMoves(wuTurnState, wuChariot).length).toBeGreaterThan(0);
+  });
+
+  it("cannon check is correctly detected", () => {
+    const state = stateWith([
+      piece("wu-cannon", "cannon", "炮", "N3", "wu"),
+      piece("shu-advisor", "advisor", "士", "N4", "shu"),
+      piece("shu-general", "general", "蜀", "N5", "shu"),
+      piece("wei-general", "general", "魏", "E5", "wei"),
+      piece("wu-general", "general", "吴", "J5", "wu"),
+    ]);
+
+    expect(getCheckedKingdoms(state)).toContain("shu");
+  });
+
+  it("cannon check is not detected without a screen piece", () => {
+    const state = stateWith([
+      piece("wu-cannon", "cannon", "炮", "N3", "wu"),
+      piece("shu-general", "general", "蜀", "N5", "shu"),
+      piece("wei-general", "general", "魏", "E5", "wei"),
+      piece("wu-general", "general", "吴", "J5", "wu"),
+      piece("shu-soldier", "soldier", "兵", "K5", "shu"),
+    ]);
+
+    expect(getCheckedKingdoms(state)).not.toContain("shu");
+  });
+});
