@@ -1,7 +1,7 @@
 import type { Kingdom, PointId } from "../board";
 import { kingdomOf, kingdomRows, parsePointId } from "../board";
-import { capturedPieceAt, nextActiveKingdom, turnOrder, type GameState } from "../game-state";
-import { getCheckedKingdoms, getPseudoLegalMoves, isKingdomInCheck, isSquareAttackedBy } from "../moves";
+import { capturedPieceAt, nextActiveKingdom, pieceAt, turnOrder, type GameState } from "../game-state";
+import { getCheckedKingdoms, getPseudoLegalMoves, horseAttacksSquare, isKingdomInCheck, isSquareAttackedBy, movementLines, soldierAttacksSquare } from "../moves";
 import type { Piece } from "../pieces";
 import type { AiProfile } from "../ai-profile";
 import { applyMove } from "../rules";
@@ -206,18 +206,141 @@ export function isKingDefenseCapture(state: GameState, action: { pieceId: string
     return false;
   }
 
-  return isInsideOwnPalace(kingdom, action.target) || getPseudoLegalMoves(state, capturedPiece).includes(movingPiece.position);
+  return isInsideOwnPalace(kingdom, action.target) || pieceAttacksSquare(state, capturedPiece, movingPiece.position);
 }
 
 export function givesDirectCheck(state: GameState, action: { pieceId: string; target: PointId }, kingdom: Kingdom): boolean {
-  const nextState = applySearchMove(state, action.pieceId, action.target);
+  const movingPiece = state.pieces.find((p) => p.id === action.pieceId);
+  if (!movingPiece) return false;
 
-  return nextState.checkedKingdoms.some((checkedKingdom) => checkedKingdom !== kingdom);
+  const origPos = movingPiece.position;
+
+  // Temporarily suppress captured piece's blocking
+  let capturedIdx = -1;
+  let capturedBlockState = false;
+  for (let i = 0; i < state.pieces.length; i++) {
+    const p = state.pieces[i];
+    if (p.id !== action.pieceId && p.position === action.target && p.blocksMovement) {
+      capturedIdx = i;
+      capturedBlockState = true;
+      (state.pieces[i] as { blocksMovement: boolean }).blocksMovement = false;
+      break;
+    }
+  }
+
+  // Clear position map and temporarily move piece
+  (state as { _positionMap: Map<PointId, Piece> | undefined })._positionMap = undefined;
+  (movingPiece as { position: PointId }).position = action.target;
+
+  let givesCheck = false;
+  try {
+    // Check if any opponent general is now attacked
+    for (const oppKingdom of turnOrder) {
+      if (oppKingdom === kingdom || state.defeatedKingdoms.includes(oppKingdom)) continue;
+      const oppGeneral = state.pieces.find((p) => p.kingdom === oppKingdom && p.type === "general" && p.blocksMovement);
+      if (oppGeneral && isSquareAttackedBy(state, oppGeneral.position, oppKingdom)) {
+        givesCheck = true;
+        break;
+      }
+    }
+  } finally {
+    // Restore state
+    (movingPiece as { position: PointId }).position = origPos;
+    if (capturedIdx >= 0) {
+      (state.pieces[capturedIdx] as { blocksMovement: boolean }).blocksMovement = capturedBlockState;
+    }
+    (state as { _positionMap: Map<PointId, Piece> | undefined })._positionMap = undefined;
+  }
+
+  return givesCheck;
+}
+
+/**
+ * Direct attack check without full move generation.
+ * Uses line scanning for chariots/generals/cannons, direct functions for horses/soldiers,
+ * and falls back to pseudo-legal moves for advisors/elephants.
+ */
+export function pieceAttacksSquare(state: GameState, piece: Piece, square: PointId): boolean {
+  if (!piece.blocksMovement || isNeutralBlocker(piece)) return false;
+  if (piece.position === square) return false;
+
+  switch (piece.type) {
+    case "chariot":
+      return linePieceAttacksSquare(state, piece, square);
+    case "general":
+      return generalAttacksSquare(state, piece, square);
+    case "cannon":
+      return cannonAttacksSquare(state, piece, square);
+    case "horse":
+      return horseAttacksSquare(state, piece, square);
+    case "soldier":
+      return soldierAttacksSquare(piece, square);
+    case "advisor":
+    case "elephant":
+      return getPseudoLegalMoves(state, piece).includes(square);
+  }
+}
+
+function linePieceAttacksSquare(state: GameState, piece: Piece, square: PointId): boolean {
+  for (const line of movementLines) {
+    const fromIdx = line.indexOf(piece.position);
+    const toIdx = line.indexOf(square);
+    if (fromIdx < 0 || toIdx < 0) continue;
+
+    const step = toIdx > fromIdx ? 1 : -1;
+    let blocked = false;
+    for (let i = fromIdx + step; i !== toIdx; i += step) {
+      if (pieceAt(state, line[i])) {
+        blocked = true;
+        break;
+      }
+    }
+    if (!blocked) return true;
+  }
+  return false;
+}
+
+function generalAttacksSquare(state: GameState, piece: Piece, square: PointId): boolean {
+  // Palace moves: check if adjacent in palace
+  const palaceRows = kingdomRows[piece.kingdom].slice(2);
+  const { row, col } = parsePointId(piece.position);
+  const { row: targetRow, col: targetCol } = parsePointId(square);
+  if (palaceRows.includes(targetRow) && targetCol >= 4 && targetCol <= 6) {
+    const rowIdx = palaceRows.indexOf(row);
+    const targetRowIdx = palaceRows.indexOf(targetRow);
+    if (rowIdx >= 0 && targetRowIdx >= 0 && Math.abs(rowIdx - targetRowIdx) + Math.abs(col - targetCol) === 1) {
+      return true;
+    }
+  }
+  // Flying general: line attack on opponent general
+  const targetPiece = pieceAt(state, square);
+  if (targetPiece?.type === "general" && targetPiece.kingdom !== piece.kingdom) {
+    return linePieceAttacksSquare(state, piece, square);
+  }
+  return false;
+}
+
+function cannonAttacksSquare(state: GameState, piece: Piece, square: PointId): boolean {
+  for (const line of movementLines) {
+    const fromIdx = line.indexOf(piece.position);
+    const toIdx = line.indexOf(square);
+    if (fromIdx < 0 || toIdx < 0) continue;
+
+    const step = toIdx > fromIdx ? 1 : -1;
+    let screens = 0;
+    for (let i = fromIdx + step; i !== toIdx; i += step) {
+      if (pieceAt(state, line[i])) {
+        screens++;
+      }
+    }
+    if (screens === 1) return true;
+  }
+  return false;
 }
 
 export function attackersOf(state: GameState, point: PointId, ownKingdom: Kingdom): Piece[] {
   return state.pieces.filter((piece) => {
-    return piece.controller !== ownKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getPseudoLegalMoves(state, piece).includes(point);
+    return piece.controller !== ownKingdom && pieceAttacksSquare(state, piece, point);
   });
 }
 
@@ -226,9 +349,7 @@ export function defendersOf(state: GameState, point: PointId, ownKingdom: Kingdo
     return (
       piece.controller === ownKingdom &&
       piece.id !== excludedPieceId &&
-      piece.blocksMovement &&
-      !isNeutralBlocker(piece) &&
-      getPseudoLegalMoves(state, piece).includes(point)
+      pieceAttacksSquare(state, piece, point)
     );
   });
 }
@@ -320,7 +441,7 @@ export function addressesHangingPiece(state: GameState, action: { pieceId: strin
       piece.controller === kingdom &&
       piece.blocksMovement &&
       pieceValue(piece, profile) >= profile.pieceValues.horse &&
-      getPseudoLegalMoves(state, capturedPiece).includes(piece.position)
+      pieceAttacksSquare(state, capturedPiece, piece.position)
     );
   });
 }

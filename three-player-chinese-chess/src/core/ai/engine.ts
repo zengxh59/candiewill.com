@@ -23,6 +23,7 @@ import {
   nearestOpponentGeneralDistance,
   isEndgameForcingAction,
   isInsideOwnPalace,
+  pieceAttacksSquare,
 } from "./tactical";
 
 import {
@@ -430,7 +431,7 @@ function extractThreatActions(
     }
 
     // Threat 3: Moving a piece to attack AI general position
-    if (getPseudoLegalMoves(state, movingPiece).includes(aiGeneral.position)) {
+    if (pieceAttacksSquare(state, movingPiece, aiGeneral.position)) {
       threats.push(action);
     }
   }
@@ -1088,6 +1089,7 @@ function evaluateAfterResponses(
     }
 
     const responseState = applySearchMove(state, response.pieceId, response.target);
+
     const aiScore =
       responseState.currentKingdom !== aiKingdom && !responseState.winner
         ? evaluateThirdPlayerResponse(responseState, aiKingdom, depth - 1, profile, aiStyle, context)
@@ -1130,6 +1132,7 @@ function evaluateThirdPlayerResponse(
     }
 
     const nextState = applySearchMove(state, action.pieceId, action.target);
+
     const actorScore =
       evaluateState(nextState, state.currentKingdom, profile, actorStyle) +
       tacticalStabilityScore(nextState, state.currentKingdom, profile, actorStyle) +
@@ -1208,7 +1211,10 @@ function quiescenceSearch(
     let best = standPat;
 
     for (const action of tacticalActions) {
-      const score = quiescenceSearch(applySearchMove(state, action.pieceId, action.target), aiKingdom, profile, aiStyle, context, qDepth + 1);
+      const searchState = applySearchMove(state, action.pieceId, action.target);
+
+      const score = quiescenceSearch(searchState, aiKingdom, profile, aiStyle, context, qDepth + 1);
+
       best = Math.max(best, score);
 
       // Prune: if we've already found a great move, no need to continue
@@ -1225,6 +1231,7 @@ function quiescenceSearch(
 
   for (const action of tacticalActions) {
     const nextState = applySearchMove(state, action.pieceId, action.target);
+
     const actorScore =
       evaluateState(nextState, currentKingdom, profile, currentStyle) +
       tacticalStabilityScore(nextState, currentKingdom, profile, currentStyle) +
@@ -1293,7 +1300,7 @@ function kingDefenseCaptureScore(
     score += profile.scoring.kingDefensePalaceCapture;
   }
 
-  if (getPseudoLegalMoves(state, capturedPiece).includes(movingPiece.position)) {
+  if (pieceAttacksSquare(state, capturedPiece, movingPiece.position)) {
     score += profile.scoring.kingDefenseAttackerCapture;
   }
 
@@ -1622,7 +1629,7 @@ function threatenedPieceReliefScore(
 
   if (capturedPiece && !isNeutralBlocker(capturedPiece)) {
     const ownVictims = state.pieces.filter((piece) => {
-      return piece.controller === kingdom && piece.blocksMovement && getPseudoLegalMoves(state, capturedPiece).includes(piece.position);
+      return piece.controller === kingdom && piece.blocksMovement && pieceAttacksSquare(state, capturedPiece, piece.position);
     });
     const bestVictimValue = Math.max(0, ...ownVictims.map((piece) => pieceValue(piece, profile)));
 

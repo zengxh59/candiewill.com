@@ -5,7 +5,7 @@ import { getPseudoLegalMoves } from "../moves";
 import type { AiProfile, AiStyleProfile, GamePhase } from "../ai-profile";
 import type { Piece } from "../pieces";
 
-import { isPointControlledByOpponent, attackersOf, defendersOf, cheapestPieceValue, generalFor, isInsideOwnPalace, hangingPieceMargin } from "./tactical";
+import { isPointControlledByOpponent, attackersOf, defendersOf, cheapestPieceValue, generalFor, isInsideOwnPalace, hangingPieceMargin, pieceAttacksSquare } from "./tactical";
 import { pieceSquareBonus } from "./pst";
 
 const winScore = 1_000_000;
@@ -264,7 +264,7 @@ export function kingSafetyScore(state: GameState, kingdom: Kingdom, profile: AiP
     score -= profile.scoring.directCheckPenalty;
   }
 
-  const directAttackers = opponentPieces.filter((piece) => getPseudoLegalMoves(state, piece).includes(general.position));
+  const directAttackers = opponentPieces.filter((piece) => pieceAttacksSquare(state, piece, general.position));
   score -= directAttackers.length * profile.scoring.directAttackerPenalty;
 
   const palacePressure = opponentPieces.reduce((total, piece) => {
@@ -424,7 +424,7 @@ function endgameGoalScore(
     }
 
     const directAttackers = state.pieces.filter((piece) => {
-      return piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && getPseudoLegalMoves(state, piece).includes(general.position);
+      return piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && pieceAttacksSquare(state, piece, general.position);
     });
     const pressureTargets = state.pieces.reduce((total, piece) => {
       return piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece)
@@ -644,7 +644,7 @@ function allianceAwareScore(
           piece.controller === opponent &&
           piece.blocksMovement &&
           !isNeutralBlocker(piece) &&
-          getPseudoLegalMoves(state, piece).includes(aiGeneral.position),
+          pieceAttacksSquare(state, piece, aiGeneral.position),
       ).length,
     );
 
@@ -690,7 +690,7 @@ function allianceAwareScore(
         piece.controller === sorted[0] &&
         piece.blocksMovement &&
         !isNeutralBlocker(piece) &&
-        getPseudoLegalMoves(state, piece).includes(weakestGeneral.position),
+        pieceAttacksSquare(state, piece, weakestGeneral.position),
     );
 
     if (attackersOnWeakGeneral.length >= 2 && sorted[0] !== aiKingdom) {
@@ -704,9 +704,8 @@ function allianceAwareScore(
           piece.blocksMovement &&
           !isNeutralBlocker(piece) &&
           piece.type !== "general" &&
-          getPseudoLegalMoves(state, piece).some(
-            (target) => target === weakestGeneral.position || attackersOnWeakGeneral.some((a) => a.position === target),
-          ),
+          (pieceAttacksSquare(state, piece, weakestGeneral.position) ||
+            attackersOnWeakGeneral.some((a) => pieceAttacksSquare(state, piece, a.position))),
       );
       score += ourDefendersNear.length * 400 * style.attackMultiplier;
     }
@@ -726,7 +725,7 @@ function allianceAwareScore(
         piece.controller === otherOpponent &&
         piece.blocksMovement &&
         !isNeutralBlocker(piece) &&
-        getPseudoLegalMoves(state, piece).includes(targetGeneral!.position),
+        pieceAttacksSquare(state, piece, targetGeneral!.position),
     );
 
     if (piecesAttacking.length >= 2) {

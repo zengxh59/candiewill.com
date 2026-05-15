@@ -17,7 +17,7 @@ const cols = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 const allRows = Object.values(kingdomRows).flat() as RowLabel[];
 const rowIndexByLabel = new Map<RowLabel, number>(allRows.map((row, index) => [row, index]));
 
-const movementLines: PointId[][] = [
+export const movementLines: PointId[][] = [
   ...allRows.map((row) => cols.map((col) => pointId(row, col))),
   ...Object.values(kingdomRows).flatMap((rows) => {
     return cols.map((col) => rows.map((row) => pointId(row, col)));
@@ -216,7 +216,7 @@ function findLineCannon(state: GameState, points: PointId[], isEnemy: (piece: Pi
   return false;
 }
 
-function horseAttacksSquare(state: GameState, piece: Piece, square: PointId): boolean {
+export function horseAttacksSquare(state: GameState, piece: Piece, square: PointId): boolean {
   const { row, col } = parsePointId(piece.position);
   const { row: targetRow, col: targetCol } = parsePointId(square);
   const rows = kingdomRows[piece.kingdom] as readonly RowLabel[];
@@ -274,7 +274,7 @@ function horseAttacksSquare(state: GameState, piece: Piece, square: PointId): bo
   return false;
 }
 
-function soldierAttacksSquare(piece: Piece, square: PointId): boolean {
+export function soldierAttacksSquare(piece: Piece, square: PointId): boolean {
   const { row, col } = parsePointId(piece.position);
   const { row: targetRow, col: targetCol } = parsePointId(square);
   const rows = kingdomRows[piece.kingdom] as readonly RowLabel[];
