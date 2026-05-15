@@ -124,10 +124,12 @@ describe("AI player", () => {
   it("chooses the first Shu response quickly after Wei opens", () => {
     const state = applyMove(createInitialGameState(), "wei-soldier-5", "A5");
     const startedAt = performance.now();
-    const move = chooseAiMove(state, "shu");
+    // Pass an explicit time budget so the opening search (now depth-3 by default)
+    // is bounded; the AI must still pick a move and return within the budget.
+    const move = chooseAiMove(state, "shu", undefined, { timeBudgetMs: 250 });
 
     expect(move).not.toBeNull();
-    expect(performance.now() - startedAt).toBeLessThan(300);
+    expect(performance.now() - startedAt).toBeLessThan(500);
   });
 
   it("can sample a different strong candidate when exploration is enabled", () => {

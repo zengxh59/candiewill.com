@@ -706,13 +706,15 @@ function search(
   let bestMove: AiMove | null = null;
 
   // Paranoid bias: when the AI is materially ahead, opponents are incentivised to
-  // coordinate against the leader. We model this by blending a fraction of the
-  // negative AI score into each opponent's decision score, pushing them toward
-  // moves that also hurt the AI even when the pure actor score is similar.
+  // coordinate against the leader. We model this by blending a small fraction of the
+  // negative AI score into each opponent's decision score, nudging them toward
+  // moves that also hurt the AI when actor scores are otherwise similar.
+  // Kept intentionally small (max 0.12) so the AI still values material captures
+  // even when leading — we don't want it to avoid free material out of paranoia.
   const opponentMaterial = materialByController(state, profile);
   const aiMaterialLead = opponentMaterial[aiKingdom] - opponentMaterial[currentKingdom];
-  // Bias ramps from 0 at equal material to 0.35 when AI leads by ≥1400 centipawns.
-  const paranoidBias = Math.min(0.35, Math.max(0, (aiMaterialLead - 200) / 1400) * 0.35);
+  // Bias ramps from 0 at equal material to 0.12 when AI leads by ≥1200 centipawns.
+  const paranoidBias = Math.min(0.12, Math.max(0, (aiMaterialLead - 300) / 1200) * 0.12);
 
   // Threat Space Search: when opponent has threatening moves against AI,
   // ensure they are searched first (even if not in the beam)
