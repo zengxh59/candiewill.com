@@ -6,6 +6,7 @@ import type { AiProfile, AiStyleProfile, GamePhase } from "../ai-profile";
 import type { Piece } from "../pieces";
 
 import { isPointControlledByOpponent, attackersOf, defendersOf, cheapestPieceValue, generalFor, isInsideOwnPalace, hangingPieceMargin } from "./tactical";
+import { pieceSquareBonus } from "./pst";
 
 const winScore = 1_000_000;
 
@@ -125,7 +126,9 @@ function activityBonus(state: GameState, piece: Piece, profile: AiProfile): numb
   }
 
   if (piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse") {
-    let bonus = getPseudoLegalMoves(state, piece).length * profile.scoring.mobilityEval;
+    const isEndgame = gamePhaseFor(state) === "endgame";
+    // PST acts as a fast proxy for mobility: well-placed pieces have higher activity
+    let bonus = pieceSquareBonus(piece.type, piece.position, piece.kingdom, isEndgame);
 
     if (kingdomOf(piece.position) !== piece.kingdom) {
       bonus += profile.pieceValues.soldier * 0.4;
@@ -139,6 +142,7 @@ function activityBonus(state: GameState, piece: Piece, profile: AiProfile): numb
 
 function formationBonus(state: GameState, piece: Piece, profile: AiProfile): number {
   const opening = isOpeningPhase(state);
+  const isEndgame = gamePhaseFor(state) === "endgame";
 
   if (opening && piece.type === "cannon" && !isOwnKingdomPoint(piece.kingdom, piece.position)) {
     return profile.scoring.openingCannonOutPenalty;
@@ -149,9 +153,10 @@ function formationBonus(state: GameState, piece: Piece, profile: AiProfile): num
   }
 
   if (piece.type === "advisor" || piece.type === "elephant") {
-    return isOwnKingdomPoint(piece.kingdom, piece.position)
-      ? profile.scoring.advisorElephantHome
-      : profile.scoring.advisorElephantAwayPenalty;
+    const pstValue = pieceSquareBonus(piece.type, piece.position, piece.kingdom, isEndgame);
+    const isHome = isOwnKingdomPoint(piece.kingdom, piece.position);
+
+    return isHome ? profile.scoring.advisorElephantHome + pstValue : profile.scoring.advisorElephantAwayPenalty + pstValue;
   }
 
   return 0;
@@ -472,13 +477,12 @@ function pieceCoordinationScore(state: GameState, aiKingdom: Kingdom, profile: A
   const cannons = ownPieces.filter((piece) => piece.type === "cannon");
   const horses = ownPieces.filter((piece) => piece.type === "horse");
 
-  // Chariot-Cannon coordination: same file or rank → double attack pressure
+  // Chariot-Cannon coordination: same file or rank → double attack pressure (coordinate check only)
   for (const chariot of chariots) {
     for (const cannon of cannons) {
       const chariotPos = parsePointId(chariot.position);
       const cannonPos = parsePointId(cannon.position);
 
-      // Same file (column): strong combo — chariot clears path, cannon attacks behind
       if (chariotPos.col === cannonPos.col) {
         const sameFile = areOnSameMovementLine(state, chariot.position, cannon.position);
         if (sameFile) {
@@ -486,45 +490,47 @@ function pieceCoordinationScore(state: GameState, aiKingdom: Kingdom, profile: A
         }
       }
 
-      // Same rank (row): also good if on the same kingdom row or connected cross-kingdom
       if (chariotPos.row === cannonPos.row) {
         score += bonus * 0.8;
       }
     }
   }
 
-  // Horse-Chariot coordination: horse attacks squares the chariot can't reach (off-line)
+  // Horse-Chariot coordination: estimate complementary control via PST proximity (no move gen)
   for (const chariot of chariots) {
     for (const horse of horses) {
-      const chariotMoves = new Set(getPseudoLegalMoves(state, chariot));
-      const horseMoves = getPseudoLegalMoves(state, horse);
+      const horsePos = parsePointId(horse.position);
+      const chariotPos = parsePointId(chariot.position);
 
-      // Count horse moves that attack squares the chariot can't (complementary control)
-      let complementaryCount = 0;
-      for (const target of horseMoves) {
-        if (!chariotMoves.has(target)) {
-          complementaryCount += 1;
-        }
-      }
+      // Horses off the chariot's row and column provide complementary control
+      const offLine = horsePos.row !== chariotPos.row && horsePos.col !== chariotPos.col;
+      const dist = Math.abs(horsePos.col - chariotPos.col);
 
-      if (complementaryCount >= 3) {
+      if (offLine && dist <= 3) {
         score += bonus * 0.9;
-      } else if (complementaryCount >= 1) {
+      } else if (offLine) {
         score += bonus * 0.3;
       }
     }
   }
 
-  // Cannon screen density: cannons are stronger when there are more pieces nearby to use as screens
+  // Cannon activity: count nearby enemy pieces as potential capture targets (no move gen)
   for (const cannon of cannons) {
-    const cannonMoves = getPseudoLegalMoves(state, cannon);
-    const captureTargets = cannonMoves.filter((target) => {
-      const targetPiece = state.pieces.find((piece) => piece.blocksMovement && piece.position === target);
-      return targetPiece && targetPiece.controller !== aiKingdom;
-    });
+    const cannonPos = parsePointId(cannon.position);
+    let nearbyEnemies = 0;
 
-    // Active cannon with capture potential
-    if (captureTargets.length >= 2) {
+    for (const piece of state.pieces) {
+      if (piece.controller !== aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece)) {
+        const piecePos = parsePointId(piece.position);
+        const rowDist = Math.abs(piecePos.row.charCodeAt(0) - cannonPos.row.charCodeAt(0));
+        const colDist = Math.abs(piecePos.col - cannonPos.col);
+        if (rowDist + colDist <= 5) {
+          nearbyEnemies++;
+        }
+      }
+    }
+
+    if (nearbyEnemies >= 3) {
       score += bonus * 0.6;
     }
   }
@@ -579,6 +585,7 @@ function centerControlScore(state: GameState, aiKingdom: Kingdom, profile: AiPro
 
   let score = 0;
   const bonus = profile.scoring.centerControlBonus;
+  const isEndgame = gamePhaseFor(state) === "endgame";
 
   const ownActivePieces = state.pieces.filter(
     (piece) => piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece) &&
@@ -589,6 +596,7 @@ function centerControlScore(state: GameState, aiKingdom: Kingdom, profile: AiPro
     const pos = parsePointId(piece.position);
     const centerDist = Math.abs(pos.col - 5);
 
+    // Center proximity bonus + PST positional quality
     if (centerDist <= 1) {
       score += bonus;
     } else if (centerDist <= 2) {
@@ -620,20 +628,61 @@ function allianceAwareScore(
   const weakestMaterial = material[sorted[1]];
   let score = 0;
 
-  // If AI is leading, opponents may form coalition against us — increase safety
+  // === Coalition Threat: AI is leading, opponents may gang up ===
   if (aiMaterial > strongestMaterial * 1.2) {
     const coalitionThreat = (strongestMaterial + weakestMaterial) * 0.35;
     score -= coalitionThreat * style.safetyMultiplier * 0.08;
     score -= profile.scoring.balanceGapPenaltyMax * 0.5;
   }
 
-  // If one opponent is far stronger than the other, encourage keeping the weaker alive
+  // === Under Siege Detection: both opponents attacking AI territory ===
+  const aiGeneral = generalFor(state, aiKingdom);
+  if (aiGeneral) {
+    const attackerCounts = activeOpponents.map((opponent) =>
+      state.pieces.filter(
+        (piece) =>
+          piece.controller === opponent &&
+          piece.blocksMovement &&
+          !isNeutralBlocker(piece) &&
+          getPseudoLegalMoves(state, piece).includes(aiGeneral.position),
+      ).length,
+    );
+
+    const totalAttackers = attackerCounts.reduce((sum, count) => sum + count, 0);
+    const bothAttacking = attackerCounts.every((count) => count >= 1);
+
+    if (bothAttacking) {
+      // Both opponents have pieces threatening AI general — severe danger
+      score -= totalAttackers * 2200 * style.safetyMultiplier;
+    } else if (totalAttackers >= 3) {
+      // Heavy attack from one side
+      score -= totalAttackers * 800 * style.safetyMultiplier;
+    }
+
+    // Detect coordinated pressure: opponents pieces near AI palace
+    const aiRows = kingdomRows[aiKingdom] as readonly string[];
+    const palaceRows = aiRows.slice(2);
+    const opponentPressureInPalace = state.pieces.filter(
+      (piece) =>
+        piece.controller !== aiKingdom &&
+        piece.blocksMovement &&
+        !isNeutralBlocker(piece) &&
+        palaceRows.some((row) => parsePointId(piece.position).row === row),
+    );
+
+    const uniqueAttackers = new Set(opponentPressureInPalace.map((p) => p.controller));
+    if (uniqueAttackers.size >= 2) {
+      score -= opponentPressureInPalace.length * 350 * style.safetyMultiplier;
+    }
+  }
+
+  // === Elimination Risk: one opponent far stronger, weak about to die ===
   if (strongestMaterial > weakestMaterial * 1.5) {
     const eliminationRisk = (strongestMaterial - weakestMaterial) * 0.04;
     score -= eliminationRisk * style.balanceMultiplier;
   }
 
-  // If an opponent is about to be eliminated, evaluate whether that benefits us
+  // === Save the Weak: strongest opponent about to eliminate weakest ===
   const weakestGeneral = generalFor(state, sorted[1]);
   if (weakestGeneral) {
     const attackersOnWeakGeneral = state.pieces.filter(
@@ -648,7 +697,7 @@ function allianceAwareScore(
       // Strongest opponent is about to eliminate weakest — bad for us
       score -= 1800 * style.safetyMultiplier;
 
-      // Bonus for interfering to save the weak kingdom
+      // Bonus for having pieces that can interfere to save the weak kingdom
       const ourDefendersNear = state.pieces.filter(
         (piece) =>
           piece.controller === aiKingdom &&
@@ -660,6 +709,29 @@ function allianceAwareScore(
           ),
       );
       score += ourDefendersNear.length * 400 * style.attackMultiplier;
+    }
+  }
+
+  // === Sit-and-Watch: opponents attacking each other, AI benefits ===
+  const opponentGenerals = activeOpponents
+    .map((kingdom) => ({ kingdom, general: generalFor(state, kingdom) }))
+    .filter((entry) => entry.general !== null);
+
+  for (const { kingdom: attackKingdom, general: targetGeneral } of opponentGenerals) {
+    const otherOpponent = activeOpponents.find((kingdom) => kingdom !== attackKingdom);
+    if (!otherOpponent) continue;
+
+    const piecesAttacking = state.pieces.filter(
+      (piece) =>
+        piece.controller === otherOpponent &&
+        piece.blocksMovement &&
+        !isNeutralBlocker(piece) &&
+        getPseudoLegalMoves(state, piece).includes(targetGeneral!.position),
+    );
+
+    if (piecesAttacking.length >= 2) {
+      // Opponents are fighting each other — "坐山观虎斗" bonus
+      score += piecesAttacking.length * 280 * style.balanceMultiplier;
     }
   }
 

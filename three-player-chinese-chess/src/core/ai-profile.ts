@@ -127,11 +127,11 @@ export function aiStyleForKingdom(kingdom: Kingdom): AiStyleProfile {
 }
 
 export const defaultAiProfile: AiProfile = {
-  "searchDepth": 3,
-  "rootBeam": 20,
-  "responseBeam": 10,
-  "thirdPlayerBeam": 6,
-  "safetyScanLimit": 18,
+  "searchDepth": 5,
+  "rootBeam": 30,
+  "responseBeam": 15,
+  "thirdPlayerBeam": 9,
+  "safetyScanLimit": 22,
   "pieceValues": {
     "general": 12000,
     "chariot": 900,

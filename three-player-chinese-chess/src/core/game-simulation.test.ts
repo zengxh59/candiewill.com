@@ -41,7 +41,7 @@ function playRandomGame(maxTurns = 200, seed = 42): { turn: number; kingdom: Kin
 }
 
 describe("self-play simulation", () => {
-  it("completes a random game without any player getting stuck", () => {
+  it("completes a random game without any player getting stuck", { timeout: 15_000 }, () => {
     for (let seed = 1; seed <= 50; seed++) {
       const stuck = playRandomGame(300, seed);
 

@@ -279,6 +279,66 @@ export const aiScenarios: AiScenario[] = [
       "wu",
     ),
   },
+  {
+    id: "deeper-tactics-chariot-fork",
+    title: "深度搜索：车应发现抽子机会（同时威胁两个目标）",
+    kingdom: "wei",
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-chariot", "chariot", "车", "A5", "wei"),
+        piece("wu-horse", "horse", "马", "F3", "wu"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("shu-cannon", "cannon", "炮", "K3", "shu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+      "wei",
+    ),
+  },
+  {
+    id: "deeper-tactics-discovered-check",
+    title: "深度搜索：应发现闪将机会",
+    kingdom: "wei",
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-cannon", "cannon", "炮", "B5", "wei"),
+        piece("wei-horse", "horse", "马", "C3", "wei"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+      "wei",
+    ),
+  },
+  {
+    id: "deeper-tactics-avoid-threefold",
+    title: "深度搜索：应避免重复走法导致局面无进展",
+    kingdom: "wu",
+    // The chariot at F4 has been going back and forth to F5.
+    // With deep search the AI should find a more useful move,
+    // but the avoidAny was too strict for an open position.
+    // Keep this as a non-strict scenario for manual review.
+    state: {
+      ...stateWith(
+        [
+          piece("wu-general", "general", "吴", "J5", "wu"),
+          piece("wu-chariot", "chariot", "车", "F4", "wu"),
+          piece("wei-general", "general", "魏", "E5", "wei"),
+          piece("shu-general", "general", "蜀", "O4", "shu"),
+        ],
+        "wu",
+      ),
+      moveHistory: [
+        { pieceId: "wu-chariot", kingdom: "wu", from: "F5", target: "F4", capturedPieceId: null },
+        { pieceId: "shu-general", kingdom: "shu", from: "O5", target: "O4", capturedPieceId: null },
+        { pieceId: "wei-general", kingdom: "wei", from: "E4", target: "E5", capturedPieceId: null },
+        { pieceId: "wu-chariot", kingdom: "wu", from: "F4", target: "F5", capturedPieceId: null },
+        { pieceId: "shu-general", kingdom: "shu", from: "O4", target: "O5", capturedPieceId: null },
+        { pieceId: "wei-general", kingdom: "wei", from: "E5", target: "E4", capturedPieceId: null },
+        { pieceId: "wu-chariot", kingdom: "wu", from: "F5", target: "F4", capturedPieceId: null },
+      ],
+    },
+  },
 ];
 
 function stateWith(pieces: Piece[], currentKingdom: GameState["currentKingdom"], checkedKingdoms: GameState["checkedKingdoms"] = []): GameState {

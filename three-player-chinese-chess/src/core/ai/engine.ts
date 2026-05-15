@@ -8,6 +8,9 @@ import type { Piece } from "../pieces";
 
 import {
   applySearchMove,
+  makeSearchMove,
+  unmakeSearchMove,
+  type UndoInfo,
   isPointControlledByOpponent,
   isKingDefenseCapture,
   givesDirectCheck,
@@ -76,10 +79,24 @@ export interface SearchStats {
     move: AiMove;
     score: number;
   }>;
+  startTimeMs: number;
+  endTimeMs: number;
+  nodesPerSecond: number;
 }
 
 const minimumSearchBudgetMs = 12;
-const defaultSearchBudgetMs = 80;
+const defaultSearchBudgetMs = 1000;
+
+const TT_MAX_SIZE = 500_000;
+const persistentTT = new Map<string, TranspositionEntry>();
+
+const EVAL_CACHE_MAX_SIZE = 100_000;
+const evalCache = new Map<string, number>();
+
+export function clearTranspositionTable(): void {
+  persistentTT.clear();
+  evalCache.clear();
+}
 
 interface SearchContext {
   deadline: number;
@@ -108,6 +125,9 @@ export function createSearchStats(): SearchStats {
     timedOut: false,
     principalVariation: [],
     topCandidates: [],
+    startTimeMs: 0,
+    endTimeMs: 0,
+    nodesPerSecond: 0,
   };
 }
 
@@ -119,7 +139,8 @@ export function chooseAiMove(
 ): AiMove | null {
   const moveOptions = options.random || options.seed === undefined ? options : { ...options, random: seededRandom(options.seed) };
   const style = options.style ?? aiStyleForKingdom(kingdom);
-  const context = createSearchContext(moveOptions);
+  const context = createSearchContext(moveOptions, state, kingdom, profile);
+  context.stats.startTimeMs = performance.now();
   const phase = gamePhaseFor(state);
   const fastOpening =
     phase === "opening" &&
@@ -136,7 +157,7 @@ export function chooseAiMove(
   }
 
   // Try opening book lookup for early game (skip when exploring for diversity)
-  if (phase === "opening" && (moveOptions.explorationRate ?? 0) <= 0 && state.moveHistory && state.moveHistory.length <= 6 && !state.checkedKingdoms.includes(kingdom)) {
+  if (phase === "opening" && (moveOptions.explorationRate ?? 0) <= 0 && state.moveHistory && state.moveHistory.length <= 9 && !state.checkedKingdoms.includes(kingdom)) {
     const bookMove = lookupOpeningBook(state.moveHistory, kingdom, moveOptions.random);
 
     if (bookMove) {
@@ -199,17 +220,28 @@ export function chooseAiMove(
   let bestScore = Number.NEGATIVE_INFINITY;
   let scoredActions: Array<{ action: AiMove; score: number }> = [];
   let prevIterationScores: Array<{ action: AiMove; score: number }> = [];
+  // Aspiration window: narrow search bounds around previous iteration's score
+  const aspirationWindow = 200;
+  let aspirationAlpha = Number.NEGATIVE_INFINITY;
+  let aspirationBeta = Number.POSITIVE_INFINITY;
 
   for (let depth = 0; depth <= targetDepth; depth += 1) {
     if (!hasSearchTime(context) && scoredActions.length > 0) {
       break;
     }
 
+    // Set aspiration window after first completed iteration
+    if (depth > 1 && scoredActions.length > 0) {
+      aspirationAlpha = bestScore - aspirationWindow;
+      aspirationBeta = bestScore + aspirationWindow;
+    }
+
     const searchProfile = searchProfileForState(state, profile, moveOptions, depth);
     const orderedRootActions = orderRootActions(state, rootActions, kingdom, searchProfile, style, context, context.principalVariation[0], prevIterationScores);
-    const iterationScores: Array<{ action: AiMove; score: number }> = [];
+    let iterationScores: Array<{ action: AiMove; score: number }> = [];
     let iterationBestAction = bestAction;
     let iterationBestScore = Number.NEGATIVE_INFINITY;
+    let windowFail = false;
 
     for (const action of orderedRootActions) {
       if (!hasSearchTime(context) && iterationScores.length > 0) {
@@ -217,10 +249,11 @@ export function chooseAiMove(
       }
 
       const nextState = applySearchMove(state, action.pieceId, action.target);
+      const rawScore = depth > 0
+        ? evaluateAfterResponses(nextState, kingdom, depth, searchProfile, style, context)
+        : evaluateState(nextState, kingdom, searchProfile, style) + forcingOpportunityScore(nextState, kingdom, searchProfile, style);
       const score =
-        (depth > 0
-          ? evaluateAfterResponses(nextState, kingdom, depth, searchProfile, style, context)
-          : evaluateState(nextState, kingdom, searchProfile, style) + forcingOpportunityScore(nextState, kingdom, searchProfile, style)) +
+        rawScore +
         cheapActionScore(state, action, kingdom, profile, style) * profile.scoring.rootActionWeight +
         styleRootPolicyScore(state, action, kingdom, profile, style, moveOptions);
 
@@ -229,6 +262,50 @@ export function chooseAiMove(
       if (score > iterationBestScore || (score === iterationBestScore && compareRootAction(action, iterationBestAction, style, moveOptions) < 0)) {
         iterationBestAction = action;
         iterationBestScore = score;
+      }
+
+      // Aspiration window check: if score falls outside window, widen and restart
+      if (depth > 1 && iterationScores.length === orderedRootActions.length) {
+        if (iterationBestScore <= aspirationAlpha || iterationBestScore >= aspirationBeta) {
+          windowFail = true;
+        }
+      }
+    }
+
+    // Re-search with full window if aspiration failed
+    if (windowFail && hasSearchTime(context)) {
+      aspirationAlpha = Number.NEGATIVE_INFINITY;
+      aspirationBeta = Number.POSITIVE_INFINITY;
+
+      const retryScores: Array<{ action: AiMove; score: number }> = [];
+      let retryBestAction = iterationBestAction;
+      let retryBestScore = Number.NEGATIVE_INFINITY;
+
+      for (const action of orderedRootActions) {
+        if (!hasSearchTime(context) && retryScores.length > 0) {
+          break;
+        }
+
+        const nextState = applySearchMove(state, action.pieceId, action.target);
+        const score =
+          (depth > 0
+            ? evaluateAfterResponses(nextState, kingdom, depth, searchProfile, style, context)
+            : evaluateState(nextState, kingdom, searchProfile, style) + forcingOpportunityScore(nextState, kingdom, searchProfile, style)) +
+          cheapActionScore(state, action, kingdom, profile, style) * profile.scoring.rootActionWeight +
+          styleRootPolicyScore(state, action, kingdom, profile, style, moveOptions);
+
+        retryScores.push({ action, score });
+
+        if (score > retryBestScore || (score === retryBestScore && compareRootAction(action, retryBestAction, style, moveOptions) < 0)) {
+          retryBestAction = action;
+          retryBestScore = score;
+        }
+      }
+
+      if (retryScores.length > 0) {
+        iterationScores = retryScores;
+        iterationBestAction = retryBestAction;
+        iterationBestScore = retryBestScore;
       }
     }
 
@@ -249,6 +326,9 @@ export function chooseAiMove(
   context.stats.timedOut = context.timedOut;
   context.stats.principalVariation = context.principalVariation;
   context.stats.topCandidates = scoredActions.slice(0, 5).map((item) => ({ move: item.action, score: Math.round(item.score) }));
+  context.stats.endTimeMs = performance.now();
+  const elapsedMs = context.stats.endTimeMs - context.stats.startTimeMs;
+  context.stats.nodesPerSecond = elapsedMs > 0 ? Math.round(context.stats.nodes / (elapsedMs / 1000)) : 0;
 
   const exploratoryAction = pickExploratoryAction(scoredActions, bestScore, moveOptions);
 
@@ -309,6 +389,53 @@ function searchProfileForState(state: GameState, profile: AiProfile, options: Ai
     responseBeam: Math.min(profile.responseBeam, options.openingResponseBeam ?? Math.max(2, Math.min(4, depth + 1))),
     thirdPlayerBeam: Math.min(profile.thirdPlayerBeam, options.openingThirdPlayerBeam ?? Math.max(1, Math.min(3, depth))),
   };
+}
+
+function extractThreatActions(
+  state: GameState,
+  currentKingdom: Kingdom,
+  aiKingdom: Kingdom,
+  profile: AiProfile,
+  style: AiStyleProfile,
+): AiMove[] {
+  // Find moves by currentKingdom that directly threaten the AI
+  const aiGeneral = generalFor(state, aiKingdom);
+  if (!aiGeneral) return [];
+
+  const threats: AiMove[] = [];
+  const allMoves = getAllActions(state, currentKingdom);
+
+  for (const action of allMoves) {
+    const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+    const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
+
+    if (!movingPiece) continue;
+
+    // Threat 1: Direct check on AI general
+    if (givesDirectCheck(state, action, currentKingdom)) {
+      const nextState = applySearchMove(state, action.pieceId, action.target);
+      if (nextState.checkedKingdoms.includes(aiKingdom)) {
+        threats.push(action);
+        continue;
+      }
+    }
+
+    // Threat 2: Capturing AI high-value pieces (chariot, horse, cannon)
+    if (capturedPiece && !isNeutralBlocker(capturedPiece) && capturedPiece.controller === aiKingdom) {
+      const capturedValue = pieceValue(capturedPiece, profile);
+      if (capturedValue >= profile.pieceValues.horse) {
+        threats.push(action);
+        continue;
+      }
+    }
+
+    // Threat 3: Moving a piece to attack AI general position
+    if (getPseudoLegalMoves(state, movingPiece).includes(aiGeneral.position)) {
+      threats.push(action);
+    }
+  }
+
+  return threats.slice(0, 5);
 }
 
 function pickExploratoryAction(
@@ -373,11 +500,32 @@ function search(
   }
 
   if (depth === 0) {
-    return (
+    const evalKey = `e|${aiKingdom}|${searchStateKey(state)}`;
+    const cached = evalCache.get(evalKey);
+    if (cached !== undefined) {
+      context.stats.ttHits += 1;
+      return cached;
+    }
+
+    const score =
       quiescenceSearch(state, aiKingdom, profile, aiStyle, context, 0) +
       tacticalStabilityScore(state, aiKingdom, profile, aiStyle) +
-      forcingOpportunityScore(state, aiKingdom, profile, aiStyle)
-    );
+      forcingOpportunityScore(state, aiKingdom, profile, aiStyle);
+
+    if (evalCache.size < EVAL_CACHE_MAX_SIZE) {
+      evalCache.set(evalKey, score);
+    } else {
+      // Evict ~20% of entries when full
+      let count = 0;
+      for (const key of evalCache.keys()) {
+        evalCache.delete(key);
+        count++;
+        if (count >= EVAL_CACHE_MAX_SIZE * 0.2) break;
+      }
+      evalCache.set(evalKey, score);
+    }
+
+    return score;
   }
 
   // Null move pruning adapted for 3-player chess
@@ -432,6 +580,11 @@ function search(
     }
   }
 
+  // Internal Iterative Deepening: if no TT bestMove, do a shallow search to get move ordering info
+  if ((!ttEntry || !ttEntry.bestMove) && depth >= 4 && hasSearchTime(context)) {
+    search(state, aiKingdom, depth - 2, alpha, beta, profile, aiStyle, context);
+  }
+
   const currentKingdom = state.currentKingdom;
   const currentStyle = currentKingdom === aiKingdom ? aiStyle : aiStyleForKingdom(currentKingdom);
   const isTactical = state.checkedKingdoms.length > 0;
@@ -440,7 +593,7 @@ function search(
   const timePressure = context.deadline !== Number.POSITIVE_INFINITY ? (context.deadline - performance.now()) / (context.deadline - (context.deadline - 200)) : 1;
   const pressureMultiplier = timePressure < 0.3 ? 0.5 : timePressure < 0.6 ? 0.75 : 1;
   const beamLimit = Math.max(2, Math.floor((isTactical ? Math.min(baseBeam + 4, baseBeam * 2) : baseBeam) * pressureMultiplier));
-  const actions = orderActions(state, getCandidateActions(state, currentKingdom, profile, currentStyle, context), currentKingdom, profile, currentStyle, context, depth, ttEntry?.bestMove).slice(
+  let actions = orderActions(state, getCandidateActions(state, currentKingdom, profile, currentStyle, context), currentKingdom, profile, currentStyle, context, depth, ttEntry?.bestMove).slice(
     0,
     beamLimit,
   );
@@ -452,9 +605,62 @@ function search(
   if (currentKingdom === aiKingdom) {
     let value = Number.NEGATIVE_INFINITY;
     let bestMove: AiMove | null = null;
+    let cutCount = 0;
+    const inCheck = state.checkedKingdoms.includes(aiKingdom);
+    // Static eval for futility pruning
+    const staticEval = evaluateState(state, aiKingdom, profile, aiStyle);
+    const futilityMargin = [0, 400, 900][Math.min(2, depth)] ?? 900;
 
-    for (const action of actions) {
-      const score = search(applySearchMove(state, action.pieceId, action.target), aiKingdom, depth - 1, alpha, beta, profile, aiStyle, context);
+    for (let index = 0; index < actions.length; index += 1) {
+      const action = actions[index];
+      const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+      const givesCheck = givesDirectCheck(state, action, aiKingdom);
+      const isCapture = Boolean(capturedPiece && !isNeutralBlocker(capturedPiece));
+      const isQuiet = !isCapture && !givesCheck && !inCheck;
+      const isGeneralCapture = capturedPiece?.type === "general";
+
+      // Futility pruning: skip quiet moves that can't possibly raise alpha
+      if (isQuiet && index > 0 && depth <= 2 && value > Number.NEGATIVE_INFINITY && staticEval + futilityMargin <= alpha) {
+        continue;
+      }
+
+      const isReduced = index >= 3 && depth >= 3 && !inCheck && !givesCheck && !isCapture;
+      let score: number;
+
+      // Use make/unmake for non-general captures (fast path), fallback for general captures
+      const useMakeUnmake = !isGeneralCapture;
+      let undo: UndoInfo | null = null;
+
+      if (useMakeUnmake) {
+        undo = makeSearchMove(state, action.pieceId, action.target);
+      }
+
+      const searchState = useMakeUnmake ? state : applySearchMove(state, action.pieceId, action.target);
+
+      if (index === 0) {
+        // PVS: first move gets full window search
+        score = search(searchState, aiKingdom, depth - 1, alpha, beta, profile, aiStyle, context);
+      } else {
+        // LMR: reduce depth for late quiet moves
+        const reducedDepth = isReduced ? Math.max(1, depth - 2) : depth - 1;
+
+        // PVS: zero-window search
+        score = search(searchState, aiKingdom, reducedDepth, alpha, alpha + 1, profile, aiStyle, context);
+
+        // Re-search with full depth and full window if reduced search beats alpha
+        if (isReduced && score > alpha && hasSearchTime(context)) {
+          score = search(searchState, aiKingdom, depth - 1, alpha, alpha + 1, profile, aiStyle, context);
+        }
+
+        // Re-search with full window if zero-window fails
+        if (score > alpha && score < beta && hasSearchTime(context)) {
+          score = search(searchState, aiKingdom, depth - 1, alpha, beta, profile, aiStyle, context);
+        }
+      }
+
+      if (useMakeUnmake && undo) {
+        unmakeSearchMove(state, undo);
+      }
 
       if (score > value) {
         value = score;
@@ -465,6 +671,12 @@ function search(
 
       if (beta <= alpha) {
         recordCutoff(context, depth, action);
+        cutCount++;
+        // Multi-Cut: if multiple moves cause cutoff, high confidence this is a cut-node
+        if (cutCount >= 3 && depth >= 2 && depth <= 4 && !inCheck) {
+          storeTransposition(context, ttKey, depth, value, originalAlpha, originalBeta, bestMove);
+          return value;
+        }
         break;
       }
     }
@@ -477,10 +689,33 @@ function search(
   let selectedAiScore = Number.POSITIVE_INFINITY;
   let bestMove: AiMove | null = null;
 
+  // Threat Space Search: when opponent has threatening moves against AI,
+  // ensure they are searched first (even if not in the beam)
+  if (depth >= 2 && currentKingdom !== aiKingdom) {
+    const threatActions = extractThreatActions(state, currentKingdom, aiKingdom, profile, currentStyle);
+    const actionKeys = new Set(actions.map(actionKey));
+    const newThreats = threatActions.filter((action) => !actionKeys.has(actionKey(action)));
+
+    if (newThreats.length > 0) {
+      // Prepend threat actions so they get searched before the regular beam
+      actions = uniqueActions([...newThreats, ...actions]).slice(0, beamLimit + newThreats.length);
+    }
+  }
+
   for (const action of actions) {
-    const nextState = applySearchMove(state, action.pieceId, action.target);
+    const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+    const isGeneralCapture = capturedPiece?.type === "general";
+    const useMakeUnmake = !isGeneralCapture;
+    let undo: UndoInfo | null = null;
+
+    if (useMakeUnmake) {
+      undo = makeSearchMove(state, action.pieceId, action.target);
+    }
+
+    const searchState = useMakeUnmake ? state : applySearchMove(state, action.pieceId, action.target);
+
     const actorScore = search(
-      nextState,
+      searchState,
       currentKingdom,
       depth - 1,
       Number.NEGATIVE_INFINITY,
@@ -489,8 +724,13 @@ function search(
       currentStyle,
       context,
     );
-    const aiScore = search(nextState, aiKingdom, depth - 1, alpha, beta, profile, aiStyle, context);
-    const pressureBonus = coalitionPressureScore(nextState, currentKingdom, aiKingdom, profile, currentStyle);
+    const aiScore = search(searchState, aiKingdom, depth - 1, alpha, beta, profile, aiStyle, context);
+    const pressureBonus = coalitionPressureScore(searchState, currentKingdom, aiKingdom, profile, currentStyle);
+
+    if (useMakeUnmake && undo) {
+      unmakeSearchMove(state, undo);
+    }
+
     const actorDecisionScore = actorScore + pressureBonus;
 
     if (
@@ -1090,8 +1330,43 @@ function openingRaidPenalty(
   return 0;
 }
 
-function createSearchContext(options: AiMoveOptions): SearchContext {
-  const budget = options.timeBudgetMs ?? ((options.explorationRate ?? 0) > 0 ? 1_000 : defaultSearchBudgetMs);
+function computeAdaptiveBudget(baseBudget: number, state: GameState, kingdom: Kingdom, profile: AiProfile): number {
+  const phase = gamePhaseFor(state);
+  const inCheck = state.checkedKingdoms.includes(kingdom);
+  let multiplier = 1;
+
+  // Critical positions get more time
+  if (inCheck) {
+    multiplier *= 1.5;
+  }
+
+  // More active pieces = more complex position = more time needed
+  const activePieces = state.pieces.filter(
+    (piece) => piece.controller === kingdom && piece.blocksMovement && !isNeutralBlocker(piece),
+  );
+  const majorPieces = activePieces.filter(
+    (piece) => piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse",
+  );
+  if (majorPieces.length >= 4) {
+    multiplier *= 1.2;
+  }
+
+  // Multiple checked kingdoms = complex tactical situation
+  if (state.checkedKingdoms.length >= 2) {
+    multiplier *= 1.3;
+  }
+
+  // Endgame with few pieces: less time needed (simpler positions)
+  if (phase === "endgame" && activePieces.length <= 4) {
+    multiplier *= 0.6;
+  }
+
+  return Math.round(baseBudget * multiplier);
+}
+
+function createSearchContext(options: AiMoveOptions, state?: GameState, kingdom?: Kingdom, profile?: AiProfile): SearchContext {
+  const rawBudget = options.timeBudgetMs ?? ((options.explorationRate ?? 0) > 0 ? 1_000 : defaultSearchBudgetMs);
+  const budget = state && kingdom && profile ? computeAdaptiveBudget(rawBudget, state, kingdom, profile) : rawBudget;
   const stats = options.debugStats ?? createSearchStats();
 
   stats.completedDepth = 0;
@@ -1101,12 +1376,28 @@ function createSearchContext(options: AiMoveOptions): SearchContext {
   stats.timedOut = false;
   stats.principalVariation = [];
   stats.topCandidates = [];
+  stats.startTimeMs = 0;
+  stats.endTimeMs = 0;
+  stats.nodesPerSecond = 0;
+
+  // Age out shallow entries and cap TT size before starting a new search
+  if (persistentTT.size > TT_MAX_SIZE * 0.8) {
+    for (const [key, entry] of persistentTT) {
+      if (entry.depth <= 1) {
+        persistentTT.delete(key);
+      }
+
+      if (persistentTT.size <= TT_MAX_SIZE * 0.6) {
+        break;
+      }
+    }
+  }
 
   return {
     deadline: Number.isFinite(budget) ? performance.now() + Math.max(minimumSearchBudgetMs, budget) : Number.POSITIVE_INFINITY,
     timedOut: false,
     stats,
-    tt: new Map(),
+    tt: persistentTT,
     killerMoves: new Map(),
     history: new Map(),
     maxQuiescenceDepth: options.maxQuiescenceDepth ?? (options.skillProfile === "fast" ? 2 : options.skillProfile === "tactical" ? 5 : 4),
@@ -1145,8 +1436,35 @@ function storeTransposition(
   bestMove: AiMove | null,
 ): void {
   const flag = score <= alpha ? "upper" : score >= beta ? "lower" : "exact";
+  const existing = context.tt.get(key);
+
+  // Replace only if deeper or same depth with more precise flag
+  if (existing && existing.depth > depth) {
+    return;
+  }
 
   context.tt.set(key, { depth, score, flag, bestMove });
+
+  // Evict oldest shallow entries if over capacity
+  if (context.tt.size > TT_MAX_SIZE) {
+    const keysToDelete: string[] = [];
+    let count = 0;
+
+    for (const [k, entry] of context.tt) {
+      if (entry.depth <= 1) {
+        keysToDelete.push(k);
+        count++;
+
+        if (count >= TT_MAX_SIZE * 0.2) {
+          break;
+        }
+      }
+    }
+
+    for (const k of keysToDelete) {
+      context.tt.delete(k);
+    }
+  }
 }
 
 function principalVariationFor(state: GameState, aiKingdom: Kingdom, context: SearchContext): AiMove[] {

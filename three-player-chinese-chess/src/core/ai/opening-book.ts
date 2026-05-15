@@ -342,6 +342,244 @@ const openingBook: OpeningEntry[] = [
       { pieceId: "shu-horse-left", target: "M1", weight: 3 },
     ],
   },
+
+  // ===== FIVE-PLY SEQUENCES (Wu second move) =====
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-left:C1|shu-horse-left:M1",
+    moves: [
+      { pieceId: "wu-horse-right", target: "H9", weight: 4 },
+      { pieceId: "wu-horse-left", target: "H1", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-right:C9|shu-horse-right:M9",
+    moves: [
+      { pieceId: "wu-horse-left", target: "H1", weight: 4 },
+      { pieceId: "wu-horse-right", target: "H9", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-horse-left:M1|wu-horse-right:H9|wei-horse-right:C9|shu-soldier-5:K5",
+    moves: [
+      { pieceId: "wu-soldier-5", target: "F5", weight: 4 },
+      { pieceId: "wu-horse-left", target: "H1", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-horse-right:M9|wu-horse-left:H1|wei-horse-left:C1|shu-soldier-5:K5",
+    moves: [
+      { pieceId: "wu-soldier-5", target: "F5", weight: 4 },
+      { pieceId: "wu-horse-right", target: "H9", weight: 3 },
+    ],
+  },
+
+  // ===== SIX-PLY SEQUENCES (Wei third move) =====
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-left:C1|shu-horse-left:M1|wu-horse-right:H9",
+    moves: [
+      { pieceId: "wei-cannon-left", target: "D2", weight: 4 },
+      { pieceId: "wei-chariot-left", target: "D1", weight: 3 },
+      { pieceId: "wei-horse-right", target: "C9", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-right:C9|shu-horse-right:M9|wu-horse-left:H1",
+    moves: [
+      { pieceId: "wei-cannon-right", target: "D8", weight: 4 },
+      { pieceId: "wei-chariot-right", target: "D9", weight: 3 },
+      { pieceId: "wei-horse-left", target: "C1", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-horse-left:M1|wu-horse-right:H9|wei-horse-right:C9|shu-soldier-5:K5|wu-soldier-5:F5",
+    moves: [
+      { pieceId: "wei-cannon-left", target: "D2", weight: 4 },
+      { pieceId: "wei-chariot-right", target: "D9", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-horse-right:M9|wu-horse-left:H1|wei-horse-left:C1|shu-soldier-5:K5|wu-soldier-5:F5",
+    moves: [
+      { pieceId: "wei-cannon-right", target: "D8", weight: 4 },
+      { pieceId: "wei-chariot-left", target: "D1", weight: 3 },
+    ],
+  },
+
+  // ===== SEVEN-PLY SEQUENCES (Shu third move) =====
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-left:C1|shu-horse-left:M1|wu-horse-right:H9|wei-cannon-left:D2",
+    moves: [
+      { pieceId: "shu-cannon-left", target: "L2", weight: 4 },
+      { pieceId: "shu-horse-right", target: "M9", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-right:C9|shu-horse-right:M9|wu-horse-left:H1|wei-cannon-right:D8",
+    moves: [
+      { pieceId: "shu-cannon-right", target: "L8", weight: 4 },
+      { pieceId: "shu-horse-left", target: "M1", weight: 3 },
+    ],
+  },
+
+  // ===== EIGHT-PLY SEQUENCES (Wu third move) =====
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-left:C1|shu-horse-left:M1|wu-horse-right:H9|wei-cannon-left:D2|shu-cannon-left:L2",
+    moves: [
+      { pieceId: "wu-horse-left", target: "H1", weight: 4 },
+      { pieceId: "wu-cannon-left", target: "G2", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-right:C9|shu-horse-right:M9|wu-horse-left:H1|wei-cannon-right:D8|shu-cannon-right:L8",
+    moves: [
+      { pieceId: "wu-horse-right", target: "H9", weight: 4 },
+      { pieceId: "wu-cannon-right", target: "G8", weight: 3 },
+    ],
+  },
+
+  // ===== NINE-PLY SEQUENCES (Wei fourth move) =====
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-left:C1|shu-horse-left:M1|wu-horse-right:H9|wei-cannon-left:D2|shu-cannon-left:L2|wu-horse-left:H1",
+    moves: [
+      { pieceId: "wei-chariot-left", target: "D1", weight: 4 },
+      { pieceId: "wei-horse-right", target: "C9", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-right:C9|shu-horse-right:M9|wu-horse-left:H1|wei-cannon-right:D8|shu-cannon-right:L8|wu-horse-right:H9",
+    moves: [
+      { pieceId: "wei-chariot-right", target: "D9", weight: 4 },
+      { pieceId: "wei-horse-left", target: "C1", weight: 3 },
+    ],
+  },
+
+  // ===== CANNON OPENING LINES =====
+  // Wei cannon development → Shu responds
+  {
+    moveSequence: "wei-cannon-left:D2|shu-cannon-left:L2",
+    moves: [
+      { pieceId: "wu-cannon-left", target: "G2", weight: 4 },
+      { pieceId: "wu-horse-left", target: "H1", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-cannon-right:D8|shu-cannon-right:L8",
+    moves: [
+      { pieceId: "wu-cannon-right", target: "G8", weight: 4 },
+      { pieceId: "wu-horse-right", target: "H9", weight: 3 },
+    ],
+  },
+  // Cannon + soldier combination
+  {
+    moveSequence: "wei-cannon-left:D2|shu-soldier-5:K5",
+    moves: [
+      { pieceId: "wu-horse-right", target: "H9", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-cannon-right:D8|shu-soldier-5:K5",
+    moves: [
+      { pieceId: "wu-horse-left", target: "H1", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+
+  // ===== SIDE SOLDIER OPENING LINES =====
+  {
+    moveSequence: "wei-soldier-3:A3|shu-soldier-3:K3",
+    moves: [
+      { pieceId: "wu-horse-left", target: "H1", weight: 4 },
+      { pieceId: "wu-soldier-3", target: "F3", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-7:A7|shu-soldier-7:K7",
+    moves: [
+      { pieceId: "wu-horse-right", target: "H9", weight: 4 },
+      { pieceId: "wu-soldier-7", target: "F7", weight: 3 },
+    ],
+  },
+
+  // ===== CHARIOT EARLY DEVELOPMENT LINES =====
+  {
+    moveSequence: "wei-chariot-left:D1|shu-horse-left:M1",
+    moves: [
+      { pieceId: "wu-horse-right", target: "H9", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-chariot-right:D9|shu-horse-right:M9",
+    moves: [
+      { pieceId: "wu-horse-left", target: "H1", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+
+  // ===== ELEPHANT OPENING LINES =====
+  {
+    moveSequence: "wei-elephant-left:C1|shu-soldier-5:K5",
+    moves: [
+      { pieceId: "wu-horse-right", target: "H9", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-elephant-right:C9|shu-soldier-5:K5",
+    moves: [
+      { pieceId: "wu-horse-left", target: "H1", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+
+  // ===== ASYMMETRIC OPENING RESPONSES =====
+  // Wei soldier + Shu cannon
+  {
+    moveSequence: "wei-soldier-5:A5|shu-cannon-left:L2",
+    moves: [
+      { pieceId: "wu-horse-right", target: "H9", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-cannon-right:L8",
+    moves: [
+      { pieceId: "wu-horse-left", target: "H1", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+  // Wei horse + Shu cannon
+  {
+    moveSequence: "wei-horse-left:C1|shu-cannon-left:L2",
+    moves: [
+      { pieceId: "wu-horse-right", target: "H9", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+  {
+    moveSequence: "wei-horse-right:C9|shu-cannon-right:L8",
+    moves: [
+      { pieceId: "wu-horse-left", target: "H1", weight: 4 },
+      { pieceId: "wu-soldier-5", target: "F5", weight: 3 },
+    ],
+  },
+
+  // ===== DEEPER CHARIOT DEVELOPMENT (5-6 plies) =====
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-left:C1|shu-horse-left:M1",
+    moves: [
+      { pieceId: "wu-chariot-left", target: "G1", weight: 3 },
+      { pieceId: "wu-horse-right", target: "H9", weight: 4 },
+    ],
+  },
+  {
+    moveSequence: "wei-soldier-5:A5|shu-soldier-5:K5|wu-soldier-5:F5|wei-horse-right:C9|shu-horse-right:M9",
+    moves: [
+      { pieceId: "wu-chariot-right", target: "G9", weight: 3 },
+      { pieceId: "wu-horse-left", target: "H1", weight: 4 },
+    ],
+  },
 ];
 
 export function lookupOpeningBook(
@@ -349,7 +587,7 @@ export function lookupOpeningBook(
   kingdom: Kingdom,
   random?: () => number,
 ): AiMove | null {
-  if (!moveHistory || moveHistory.length === 0 || moveHistory.length > 6) {
+  if (!moveHistory || moveHistory.length === 0 || moveHistory.length > 9) {
     return null;
   }
 

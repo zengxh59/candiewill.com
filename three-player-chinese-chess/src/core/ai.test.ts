@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseAiMove } from "./ai";
+import { chooseAiMove, clearTranspositionTable } from "./ai";
 import { aiScenarios } from "./ai-scenarios";
 import { aiStyleForKingdom } from "./ai-profile";
 import { capturedPieceAt, createInitialGameState, type GameState } from "./game-state";
@@ -8,7 +8,9 @@ import type { Piece } from "./pieces";
 import { applyMove } from "./rules";
 
 describe("AI player", () => {
-  it("passes the shared AI scenario suite", () => {
+  it("passes the shared AI scenario suite", { timeout: 30_000 }, () => {
+    clearTranspositionTable();
+
     for (const scenario of aiScenarios) {
       const move = chooseAiMove(scenario.state, scenario.kingdom);
 

@@ -31,6 +31,21 @@ const movementLines: PointId[][] = [
   ["K5", "A5"],
 ];
 
+// Precomputed line index map for fast pin detection
+const pointLineMap = new Map<PointId, { lineIndex: number; positionInLine: number }[]>();
+
+for (let li = 0; li < movementLines.length; li++) {
+  for (let pi = 0; pi < movementLines[li].length; pi++) {
+    const point = movementLines[li][pi];
+    let entries = pointLineMap.get(point);
+    if (!entries) {
+      entries = [];
+      pointLineMap.set(point, entries);
+    }
+    entries.push({ lineIndex: li, positionInLine: pi });
+  }
+}
+
 interface CrossZone {
   kingdoms: readonly [Kingdom, Kingdom];
   rows: readonly RowLabel[];
@@ -46,9 +61,64 @@ const crossZones: CrossZone[] = [
 
 export function getLegalMoves(state: GameState, piece: Piece): PointId[] {
   const controller = piece.controller;
-  return getPseudoLegalMoves(state, piece).filter((target) => {
+  const pseudoMoves = getPseudoLegalMoves(state, piece);
+
+  // Fast path: not in check, not the general, not pinned by a line attacker
+  if (piece.type !== "general" && !state.checkedKingdoms.includes(controller) && !isPieceOnPinLine(state, piece)) {
+    return pseudoMoves;
+  }
+
+  // Slow path: validate each move with state simulation
+  return pseudoMoves.filter((target) => {
     return !isKingdomInCheck(simulateMove(state, piece.id, target), controller);
   });
+}
+
+function isPieceOnPinLine(state: GameState, piece: Piece): boolean {
+  const kingdom = piece.controller;
+  const general = state.pieces.find(
+    (p) => p.kingdom === kingdom && p.type === "general" && p.blocksMovement,
+  );
+  if (!general) return false;
+
+  const genLineEntries = pointLineMap.get(general.position);
+  if (!genLineEntries) return false;
+
+  for (const genEntry of genLineEntries) {
+    const line = movementLines[genEntry.lineIndex];
+    const piecePos = line.indexOf(piece.position);
+    if (piecePos < 0 || piecePos === genEntry.positionInLine) continue;
+
+    const step = piecePos > genEntry.positionInLine ? 1 : -1;
+
+    // Verify no pieces between general and our piece on this line
+    let blocked = false;
+    for (let i = genEntry.positionInLine + step; i !== piecePos; i += step) {
+      if (pieceAt(state, line[i])) {
+        blocked = true;
+        break;
+      }
+    }
+    if (blocked) continue;
+
+    // Check for enemy line attacker beyond our piece
+    for (let i = piecePos + step; i >= 0 && i < line.length; i += step) {
+      const p = pieceAt(state, line[i]);
+      if (!p) continue;
+
+      if (
+        p.controller !== kingdom &&
+        p.blocksMovement &&
+        !(p.defeated && p.controller === p.kingdom) &&
+        (p.type === "chariot" || p.type === "general")
+      ) {
+        return true;
+      }
+      break;
+    }
+  }
+
+  return false;
 }
 
 function simulateMove(state: GameState, pieceId: string, target: PointId): GameState {

@@ -1,5 +1,5 @@
 import type { Kingdom } from "../core/board";
-import { chooseAiMove, type AiMove, type AiMoveOptions } from "../core/ai";
+import { chooseAiMove, clearTranspositionTable, type AiMove, type AiMoveOptions } from "../core/ai";
 import type { AiProfile } from "../core/ai-profile";
 import type { GameState } from "../core/game-state";
 
@@ -17,8 +17,34 @@ interface AiWorkerResponse {
   error?: string;
 }
 
-self.addEventListener("message", (event: MessageEvent<AiWorkerRequest>) => {
-  const request = event.data;
+interface AiWorkerControl {
+  type: "clear" | "precompute";
+  state?: GameState;
+  kingdom?: Kingdom;
+  profile?: AiProfile;
+}
+
+// Handle move computation requests
+self.addEventListener("message", (event: MessageEvent<AiWorkerRequest | AiWorkerControl>) => {
+  const data = event.data;
+
+  // Control messages for TT management
+  if ("type" in data) {
+    if (data.type === "clear") {
+      clearTranspositionTable();
+    } else if (data.type === "precompute" && data.state && data.kingdom && data.profile) {
+      // Pre-compute: do a quick search to populate the TT while opponent is thinking
+      chooseAiMove(data.state, data.kingdom, data.profile, {
+        timeBudgetMs: 200,
+        maxDepth: 2,
+      });
+    }
+
+    return;
+  }
+
+  // Standard move computation
+  const request = data as AiWorkerRequest;
   let response: AiWorkerResponse;
 
   try {

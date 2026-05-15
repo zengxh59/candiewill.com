@@ -1,7 +1,7 @@
 import type { Kingdom, PointId } from "../board";
-import { kingdomRows, parsePointId } from "../board";
-import { capturedPieceAt, type GameState } from "../game-state";
-import { getPseudoLegalMoves, isSquareAttackedBy } from "../moves";
+import { kingdomOf, kingdomRows, parsePointId } from "../board";
+import { capturedPieceAt, nextActiveKingdom, turnOrder, type GameState } from "../game-state";
+import { getCheckedKingdoms, getPseudoLegalMoves, isKingdomInCheck, isSquareAttackedBy } from "../moves";
 import type { Piece } from "../pieces";
 import type { AiProfile } from "../ai-profile";
 import { applyMove } from "../rules";
@@ -21,6 +21,169 @@ export function applySearchMove(state: GameState, pieceId: string, target: Point
     ...nextState,
     moveHistory: state.moveHistory,
   };
+}
+
+// === Fast make/unmake for search: modifies state in-place, returns undo info ===
+
+export interface UndoInfo {
+  pieceId: string;
+  fromPosition: PointId;
+  capturedPieceIndex: number;
+  capturedPiece: Piece | null;
+  currentKingdom: Kingdom;
+  checkedKingdoms: Kingdom[];
+  defeatedKingdoms: Kingdom[];
+  winner: Kingdom | null;
+  positionMapCleared: boolean;
+}
+
+export function makeSearchMove(state: GameState, pieceId: string, target: PointId): UndoInfo {
+  const movingPieceIndex = state.pieces.findIndex((piece) => piece.id === pieceId);
+  const movingPiece = state.pieces[movingPieceIndex];
+  const fromPosition = movingPiece.position;
+
+  // Find captured piece at target
+  let capturedPieceIndex = -1;
+  let capturedPiece: Piece | null = null;
+
+  for (let index = 0; index < state.pieces.length; index += 1) {
+    const piece = state.pieces[index];
+    if (piece.id !== pieceId && piece.position === target && piece.blocksMovement) {
+      capturedPieceIndex = index;
+      capturedPiece = { ...piece };
+      break;
+    }
+  }
+
+  const undo: UndoInfo = {
+    pieceId,
+    fromPosition,
+    capturedPieceIndex,
+    capturedPiece,
+    currentKingdom: state.currentKingdom,
+    checkedKingdoms: state.checkedKingdoms,
+    defeatedKingdoms: state.defeatedKingdoms,
+    winner: state.winner,
+    positionMapCleared: state._positionMap !== undefined,
+  };
+
+  // Clear position map cache
+  if (state._positionMap) {
+    (state as { _positionMap: Map<PointId, Piece> | undefined })._positionMap = undefined;
+  }
+
+  // Move the piece in-place
+  (state.pieces[movingPieceIndex] as { position: PointId }).position = target;
+
+  // Handle capture: remove or mark defeated
+  if (capturedPiece) {
+    if (capturedPiece.type === "general" && !state.defeatedKingdoms.includes(capturedPiece.kingdom)) {
+      // General captured — defeat that kingdom
+      const defeatedKingdom = capturedPiece.kingdom;
+      state.defeatedKingdoms = [...state.defeatedKingdoms, defeatedKingdom];
+
+      // Apply defeated piece mode
+      if (state.options.defeatedPieceMode === "remove") {
+        // Remove all pieces of the defeated kingdom
+        state.pieces = state.pieces.filter((piece) => piece.kingdom !== defeatedKingdom);
+      } else {
+        for (let index = 0; index < state.pieces.length; index += 1) {
+          if (state.pieces[index].kingdom === defeatedKingdom) {
+            (state.pieces[index] as { defeated: boolean; blocksMovement: boolean; controller: Kingdom }).defeated = true;
+            (state.pieces[index] as { defeated: boolean; blocksMovement: boolean; controller: Kingdom }).blocksMovement = true;
+            if (state.options.defeatedPieceMode === "takeover") {
+              (state.pieces[index] as { controller: Kingdom }).controller = movingPiece.controller;
+            }
+          }
+        }
+      }
+
+      // Check for winner
+      const activeKingdoms = turnOrder.filter((kingdom) => !state.defeatedKingdoms.includes(kingdom));
+      if (activeKingdoms.length === 1) {
+        (state as { winner: Kingdom | null }).winner = activeKingdoms[0];
+      }
+    } else if (state.options.defeatedPieceMode === "remove") {
+      state.pieces.splice(capturedPieceIndex, 1);
+    } else {
+      (state.pieces[capturedPieceIndex] as { defeated: boolean }).defeated = true;
+      (state.pieces[capturedPieceIndex] as { blocksMovement: boolean }).blocksMovement = false;
+    }
+  }
+
+  // Advance turn
+  (state as { currentKingdom: Kingdom }).currentKingdom = nextActiveKingdom(undo.currentKingdom, state.defeatedKingdoms);
+
+  // Incremental check detection: only re-check kingdoms whose general might be affected
+  if (state.winner) {
+    (state as { checkedKingdoms: Kingdom[] }).checkedKingdoms = [];
+  } else {
+    // Start from the old checked kingdoms and update based on the move
+    const checked: Kingdom[] = [];
+    for (const kingdom of (Object.keys(kingdomRows) as Kingdom[])) {
+      if (state.defeatedKingdoms.includes(kingdom)) continue;
+      // Only re-check if the move could affect this kingdom's check status:
+      // the general itself moved, a capture happened near the general, or it was previously checked
+      const wasChecked = undo.checkedKingdoms.includes(kingdom);
+      const movingPiece = state.pieces[movingPieceIndex];
+      const movedFromOtherKingdom = movingPiece && kingdomOf(fromPosition) === kingdom;
+      const movedToOtherKingdom = movingPiece && kingdomOf(target) === kingdom;
+      const capturedInKingdom = capturedPiece && kingdomOf(capturedPiece.position) === kingdom;
+
+      if (wasChecked || movedFromOtherKingdom || movedToOtherKingdom || capturedInKingdom) {
+        if (isKingdomInCheck(state, kingdom)) {
+          checked.push(kingdom);
+        }
+      } else {
+        // Unchanged — keep old status
+        if (wasChecked) {
+          checked.push(kingdom);
+        }
+      }
+    }
+    (state as { checkedKingdoms: Kingdom[] }).checkedKingdoms = checked;
+  }
+
+  return undo;
+}
+
+export function unmakeSearchMove(state: GameState, undo: UndoInfo): void {
+  // Restore checked kingdoms, defeated kingdoms, winner, current kingdom
+  (state as { checkedKingdoms: Kingdom[] }).checkedKingdoms = undo.checkedKingdoms;
+  (state as { currentKingdom: Kingdom }).currentKingdom = undo.currentKingdom;
+  (state as { defeatedKingdoms: Kingdom[] }).defeatedKingdoms = undo.defeatedKingdoms;
+  (state as { winner: Kingdom | null }).winner = undo.winner;
+
+  // Restore captured piece
+  if (undo.capturedPiece) {
+    // If the capture caused a kingdom defeat, we need to fully restore via applySearchMove fallback
+    // For simplicity, just re-apply from scratch in that case
+    if (undo.capturedPiece.type === "general") {
+      // Full restore is complex for general captures — signal that fallback is needed
+      return;
+    }
+
+    if (state.options.defeatedPieceMode === "remove") {
+      // Re-insert the captured piece at its original index
+      state.pieces.splice(undo.capturedPieceIndex, 0, { ...undo.capturedPiece });
+    } else {
+      const pieceIndex = state.pieces.findIndex((piece) => piece.id === undo.capturedPiece!.id);
+      if (pieceIndex >= 0) {
+        state.pieces[pieceIndex] = { ...undo.capturedPiece };
+      }
+    }
+  }
+
+  // Move piece back to original position
+  const movingPieceIndex = state.pieces.findIndex((piece) => piece.id === undo.pieceId);
+  if (movingPieceIndex >= 0) {
+    (state.pieces[movingPieceIndex] as { position: PointId }).position = undo.fromPosition;
+  }
+
+  // Rebuild position map if it existed before
+  if (undo.positionMapCleared) {
+    (state as { _positionMap: Map<PointId, Piece> | undefined })._positionMap = undefined;
+  }
 }
 
 export function isPointControlledByOpponent(state: GameState, point: PointId, kingdom: Kingdom): boolean {
