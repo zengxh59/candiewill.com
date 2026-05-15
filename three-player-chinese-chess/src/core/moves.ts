@@ -63,8 +63,8 @@ export function getLegalMoves(state: GameState, piece: Piece): PointId[] {
   const controller = piece.controller;
   const pseudoMoves = getPseudoLegalMoves(state, piece);
 
-  // Fast path: not in check, not the general, not pinned by a line attacker
-  if (piece.type !== "general" && !state.checkedKingdoms.includes(controller) && !isPieceOnPinLine(state, piece)) {
+  // Fast path: not the general, not pinned by a line attacker
+  if (piece.type !== "general" && !isPieceOnPinLine(state, piece)) {
     return pseudoMoves;
   }
 

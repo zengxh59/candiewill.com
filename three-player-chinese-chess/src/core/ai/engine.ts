@@ -145,10 +145,11 @@ export function chooseAiMove(
   const context = createSearchContext(moveOptions, state, kingdom, profile);
   context.stats.startTimeMs = performance.now();
   const phase = gamePhaseFor(state);
+  // Compute effective search depth first so fastOpening can check whether real search is happening.
+  const effectiveTargetDepth = searchDepthForState(state, profile, moveOptions);
   const fastOpening =
     phase === "opening" &&
-    moveOptions.timeBudgetMs === undefined &&
-    moveOptions.openingSearchDepth === undefined &&
+    effectiveTargetDepth === 0 &&
     (moveOptions.explorationRate ?? 0) <= 0 &&
     !state.checkedKingdoms.includes(kingdom);
   const lowBudget = phase === "opening" && (moveOptions.timeBudgetMs ?? Number.POSITIVE_INFINITY) <= 150 && !state.checkedKingdoms.includes(kingdom);
@@ -172,12 +173,15 @@ export function chooseAiMove(
     }
   }
 
+  // Shortcut 1: capturing a piece that is directly threatening our general inside the palace
+  // (always correct because the capturer is already in our palace attacking the general).
   const urgentKingDefense = actions.find((action) => isKingDefenseCapture(state, action, kingdom));
 
   if (urgentKingDefense) {
     return urgentKingDefense;
   }
 
+  // Shortcut 2: immediately capturing an opponent general — always wins.
   const generalCapture = actions.find((action) => {
     const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
 
@@ -188,35 +192,13 @@ export function chooseAiMove(
     return generalCapture;
   }
 
-  const profitableCapture = actions
-    .filter((action) => {
-      return isProfitableCapture(state, action, kingdom, profile) && doesNotLeaveKingdomInCheck(state, action, kingdom);
-    })
-    .sort((left, right) => {
-      return staticExchangeScore(state, right, kingdom, profile) - staticExchangeScore(state, left, kingdom, profile) || compareAction(left, right);
-    })[0];
+  // NOTE: "profitableCapture" and "urgentHangingDefense" pre-search shortcuts have been
+  // intentionally removed. In 3-player chess, a locally profitable capture can walk into a
+  // fork or coordinated attack from the third player. The search handles both priorities
+  // correctly via actionOrderingScore (captures: MVV-LVA + SEE bonus; hanging pieces: 14000
+  // ordering bonus), so no information is lost—only blind greedy bypasses are eliminated.
 
-  if (profitableCapture && staticExchangeScore(state, profitableCapture, kingdom, profile) >= profile.pieceValues.soldier) {
-    return profitableCapture;
-  }
-
-  const urgentHangingDefense = (moveOptions.explorationRate ?? 0) > 0 ? null : actions
-    .filter((action) => {
-      const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
-
-      return (
-        Boolean(movingPiece && pieceValue(movingPiece, profile) >= profile.pieceValues.horse) &&
-        addressesHangingPiece(state, action, kingdom, profile) &&
-        doesNotLeaveKingdomInCheck(state, action, kingdom)
-      );
-    })
-    .sort((left, right) => actionOrderingScore(state, right, kingdom, profile, style, context) - actionOrderingScore(state, left, kingdom, profile, style, context))[0];
-
-  if (urgentHangingDefense) {
-    return urgentHangingDefense;
-  }
-
-  const targetDepth = lowBudget ? Math.min(1, searchDepthForState(state, profile, moveOptions)) : searchDepthForState(state, profile, moveOptions);
+  const targetDepth = lowBudget ? Math.min(1, effectiveTargetDepth) : effectiveTargetDepth;
   const rootLimit = rootBeamForState(state, profile, moveOptions, targetDepth);
   const rootActions = fastCandidates ? actions.slice(0, rootLimit) : rootActionWindow(state, actions, kingdom, profile, style, rootLimit);
   let bestAction = rootActions[0];
@@ -381,7 +363,11 @@ function searchDepthForState(state: GameState, profile: AiProfile, options: AiMo
     return profileDepth;
   }
 
-  return Math.max(0, Math.min(profileDepth, options.openingSearchDepth ?? 0));
+  // Opening: use at least 3 ply so the AI sees opponent responses after the book phase ends.
+  // Previously defaulted to 0, which left the AI doing a 1-ply greedy pick once the opening
+  // book expired.
+  const defaultOpeningDepth = 3;
+  return Math.max(0, Math.min(profileDepth, options.openingSearchDepth ?? defaultOpeningDepth));
 }
 
 function rootBeamForState(state: GameState, profile: AiProfile, options: AiMoveOptions, depth: number): number {
@@ -719,6 +705,15 @@ function search(
   let selectedAiScore = Number.POSITIVE_INFINITY;
   let bestMove: AiMove | null = null;
 
+  // Paranoid bias: when the AI is materially ahead, opponents are incentivised to
+  // coordinate against the leader. We model this by blending a fraction of the
+  // negative AI score into each opponent's decision score, pushing them toward
+  // moves that also hurt the AI even when the pure actor score is similar.
+  const opponentMaterial = materialByController(state, profile);
+  const aiMaterialLead = opponentMaterial[aiKingdom] - opponentMaterial[currentKingdom];
+  // Bias ramps from 0 at equal material to 0.35 when AI leads by ≥1400 centipawns.
+  const paranoidBias = Math.min(0.35, Math.max(0, (aiMaterialLead - 200) / 1400) * 0.35);
+
   // Threat Space Search: when opponent has threatening moves against AI,
   // ensure they are searched first (even if not in the beam)
   if (depth >= 2 && currentKingdom !== aiKingdom) {
@@ -761,7 +756,10 @@ function search(
       unmakeSearchMove(state, undo);
     }
 
-    const actorDecisionScore = actorScore + pressureBonus;
+    // actorDecisionScore: the score the opponent uses to rank this move.
+    // When the AI is leading, inject a Paranoid bias so the opponent slightly
+    // prefers moves that hurt the AI (模拟"联手克强"的博弈倾向).
+    const actorDecisionScore = actorScore + pressureBonus - aiScore * paranoidBias;
 
     if (
       actorDecisionScore > bestActorScore ||
@@ -986,7 +984,7 @@ function actionOrderingScore(
 
   if (capturedPiece && !isNeutralBlocker(capturedPiece)) {
     // MVV-LVA: prioritize capturing high-value pieces with low-value attackers
-    score += pieceValue(capturedPiece, profile) * 11 - pieceValue(movingPiece, profile) * 2;
+    score += pieceValue(capturedPiece, profile) * 8 - pieceValue(movingPiece, profile) * 3;
     score += staticExchangeScore(state, action, kingdom, profile) * 4;
     score += mvvLvaBonus(capturedPiece, movingPiece, profile);
   }
@@ -1083,6 +1081,10 @@ function cheapActionScore(state: GameState, action: AiMove, kingdom: Kingdom, pr
     score += tacticalActionScore(state, action, movingPiece, capturedPiece, kingdom, profile, style);
     score += threatenedPieceReliefScore(state, action, movingPiece, capturedPiece, kingdom, profile, style);
     score -= quietExposurePenalty(state, action, movingPiece, capturedPiece, kingdom, profile, style);
+  } else {
+    if (!capturedPiece && movingPiece.type !== "general") {
+      score -= quietExposurePenalty(state, action, movingPiece, capturedPiece, kingdom, profile, style) * 0.6;
+    }
   }
 
   score += style.preferredPieces[movingPiece.type] ?? 0;
@@ -1698,7 +1700,7 @@ function quietExposurePenalty(
     return 0;
   }
 
-  return pieceValue(movingPiece, profile) * 0.42 / style.riskTolerance;
+  return pieceValue(movingPiece, profile) * 0.55 / style.riskTolerance;
 }
 
 function threatenedPieceReliefScore(

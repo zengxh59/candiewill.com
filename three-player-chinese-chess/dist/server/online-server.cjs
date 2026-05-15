@@ -3986,7 +3986,7 @@ var crossZones = [
 function getLegalMoves(state, piece2) {
   const controller = piece2.controller;
   const pseudoMoves = getPseudoLegalMoves(state, piece2);
-  if (piece2.type !== "general" && !state.checkedKingdoms.includes(controller) && !isPieceOnPinLine(state, piece2)) {
+  if (piece2.type !== "general" && !isPieceOnPinLine(state, piece2)) {
     return pseudoMoves;
   }
   return pseudoMoves.filter((target) => {

@@ -134,8 +134,8 @@ export const defaultAiProfile: AiProfile = {
   "safetyScanLimit": 22,
   "pieceValues": {
     "general": 12000,
-    "chariot": 900,
-    "cannon": 400,
+    "chariot": 920,
+    "cannon": 430,
     "horse": 400,
     "elephant": 200,
     "advisor": 200,
@@ -143,13 +143,17 @@ export const defaultAiProfile: AiProfile = {
   },
   "phasePieceValues": {
     "opening": {
-      "cannon": 450,
+      "cannon": 460,
       "horse": 350,
     },
+    "middlegame": {
+      "cannon": 430,
+      "chariot": 920,
+    },
     "endgame": {
-      "cannon": 350,
-      "horse": 450,
-      "chariot": 950,
+      "cannon": 340,
+      "horse": 460,
+      "chariot": 960,
       "soldier": 150,
       "advisor": 250,
     },
@@ -166,7 +170,7 @@ export const defaultAiProfile: AiProfile = {
     "developmentCannon": 180,
     "developmentSoldier": 80,
     "badTradeMultiplier": 2.8,
-    "exposedTradeMultiplier": 1.05,
+    "exposedTradeMultiplier": 1.35,
     "openingRaidPenalty": 1350,
     "kingDefensePalaceCapture": 22000,
     "kingDefenseAttackerCapture": 18000,

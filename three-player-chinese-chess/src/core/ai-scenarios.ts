@@ -339,6 +339,80 @@ export const aiScenarios: AiScenario[] = [
       ],
     },
   },
+  // ── Regression scenarios for removed greedy shortcuts ────────────────────────
+  {
+    id: "no-greedy-capture-into-fork",
+    title: "不能贪吃落入叉击：车吃马后被第三家抽将",
+    // Wei chariot can take shu's horse at K3, but after that wu's cannon at F3 forks
+    // wei-general (E5) and wei-chariot (K3). The correct play is NOT to take the horse.
+    kingdom: "wei",
+    avoid: { pieceId: "wei-chariot", target: "K3" },
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-chariot", "chariot", "车", "E3", "wei"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wu-cannon", "cannon", "炮", "F3", "wu"),
+        piece("wu-screen", "soldier", "卒", "H3", "wu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+        piece("shu-horse", "horse", "马", "K3", "shu"),
+      ],
+      "wei",
+    ),
+  },
+  {
+    id: "search-finds-profitable-capture-anyway",
+    title: "搜索仍能发现明显有利吃子（移除快捷路径后不回归）",
+    // Wei chariot can take shu soldier at K5 cleanly — the search should still pick this up.
+    kingdom: "wei",
+    mustCaptureIfProfitable: true,
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-chariot", "chariot", "车", "E1", "wei"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+        piece("shu-soldier", "soldier", "兵", "K5", "shu"),
+      ],
+      "wei",
+    ),
+  },
+  {
+    id: "hanging-piece-addressed-by-search",
+    title: "搜索能发现己方挂子并撤退救棋（移除快捷路径后不回归）",
+    // Wei horse at C4 is attacked by wu's chariot at F4 with no defender.
+    // The AI should move the horse away (mustAddressThreatenedPiece).
+    kingdom: "wei",
+    mustAddressThreatenedPiece: true,
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-horse", "horse", "马", "C4", "wei"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wu-chariot", "chariot", "车", "F4", "wu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+      "wei",
+    ),
+  },
+  {
+    id: "opening-search-avoids-blunder",
+    title: "开局搜索 3 层：避免发展出明显坏棋（炮落在被反吃的空格）",
+    // Wei cannon at C2 should not move to F2 where it is immediately captured by wu-chariot at F9.
+    kingdom: "wei",
+    avoid: { pieceId: "wei-cannon", target: "F2" },
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-cannon", "cannon", "炮", "C2", "wei"),
+        piece("wei-soldier", "soldier", "兵", "B5", "wei"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wu-chariot", "chariot", "车", "F9", "wu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+      "wei",
+    ),
+  },
 ];
 
 function stateWith(pieces: Piece[], currentKingdom: GameState["currentKingdom"], checkedKingdoms: GameState["checkedKingdoms"] = []): GameState {

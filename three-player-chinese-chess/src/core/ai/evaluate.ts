@@ -339,7 +339,7 @@ function pieceSafetyScore(state: GameState, aiKingdom: Kingdom, profile: AiProfi
     const value = pieceValue(piece, profile);
     const defenders = defendersOf(state, piece.position, piece.controller, piece.id);
     const hanging = defenders.length === 0 || cheapestPieceValue(attackers, profile) < value - hangingPieceMargin;
-    const pressure = (hanging ? value * 0.78 : value * 0.22) * (phase === "endgame" ? 1.45 : 1);
+    const pressure = (hanging ? value * 0.95 : value * 0.28) * (phase === "endgame" ? 1.45 : 1);
 
     if (piece.controller === aiKingdom) {
       score -= pressure / style.riskTolerance;
@@ -355,10 +355,29 @@ function threePlayerBalanceScore(material: Record<Kingdom, number>, aiKingdom: K
   const opponents = (Object.keys(material) as Kingdom[]).filter((kingdom) => kingdom !== aiKingdom);
   const [stronger, weaker] = opponents.sort((left, right) => material[right] - material[left]);
   const gap = material[stronger] - material[weaker];
+  const aiMaterial = material[aiKingdom];
+  const aiLead = aiMaterial - material[stronger];
 
+  // When AI is clearly leading, imbalance between opponents is good (鹬蚌相争):
+  // the two opponents fighting each other benefits the AI.
+  if (aiLead > 600) {
+    return gap > 900
+      ? Math.min(profile.scoring.balanceGapPenaltyMax * 0.6, gap * profile.scoring.balanceGapPenalty * 0.5)
+      : 0;
+  }
+
+  // When AI is behind, maintaining balance between opponents is beneficial
+  // (prevents the stronger opponent from snowballing unchecked).
+  if (aiLead < -400) {
+    return gap > 900
+      ? -Math.min(profile.scoring.balanceGapPenaltyMax * 0.8, gap * profile.scoring.balanceGapPenalty * 0.8)
+      : profile.scoring.balanceStableBonus * 1.2;
+  }
+
+  // Neutral position: mild balance preference
   return gap > 900
-    ? -Math.min(profile.scoring.balanceGapPenaltyMax, gap * profile.scoring.balanceGapPenalty)
-    : profile.scoring.balanceStableBonus;
+    ? -Math.min(profile.scoring.balanceGapPenaltyMax * 0.4, gap * profile.scoring.balanceGapPenalty * 0.4)
+    : profile.scoring.balanceStableBonus * 0.5;
 }
 
 export function strongestOpponent(material: Record<Kingdom, number>, aiKingdom: Kingdom): Kingdom {

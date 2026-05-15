@@ -9,7 +9,7 @@ import { applyMove } from "../rules";
 import { pieceValue, isNeutralBlocker } from "./evaluate";
 import { type ZobristHash, xorHash, pieceHash, sideHash, defeatedHash } from "./zobrist";
 
-export const profitableCaptureMargin = 120;
+export const profitableCaptureMargin = 200;
 export const hangingPieceMargin = 220;
 
 const allRows = Object.values(kingdomRows).flat();
@@ -418,7 +418,6 @@ export function staticExchangeScore(state: GameState, action: { pieceId: string;
   }
 
   const capturedValue = pieceValue(capturedPiece, profile);
-  const movingValue = pieceValue(movingPiece, profile);
   const nextState = applySearchMove(state, action.pieceId, action.target);
   const attackers = attackersOf(nextState, action.target, kingdom);
 
@@ -426,17 +425,48 @@ export function staticExchangeScore(state: GameState, action: { pieceId: string;
     return capturedValue;
   }
 
+  // Iterative exchange: build gain sequence then propagate backwards
+  const gain: number[] = [capturedValue];
   const defenders = defendersOf(nextState, action.target, kingdom, movingPiece.id);
-  const recaptureCost = Math.min(movingValue, cheapestPieceValue(attackers, profile));
-  const defenderCompensation = defenders.length ? Math.min(movingValue * 0.45, cheapestPieceValue(defenders, profile) * 0.35) : 0;
 
-  return capturedValue - recaptureCost + defenderCompensation;
+  const attackerValues = attackers.map((p) => pieceValue(p, profile)).sort((a, b) => a - b);
+  const defenderValues = defenders.map((p) => pieceValue(p, profile)).sort((a, b) => a - b);
+
+  let pieceOnSquareValue = pieceValue(movingPiece, profile);
+  let isOpponentTurn = true;
+  let attackerIdx = 0;
+  let defenderIdx = 0;
+  const maxSteps = attackerValues.length + defenderValues.length;
+
+  for (let step = 0; step < maxSteps; step++) {
+    if (isOpponentTurn) {
+      if (attackerIdx >= attackerValues.length) break;
+      gain.push(pieceOnSquareValue);
+      pieceOnSquareValue = attackerValues[attackerIdx];
+      attackerIdx++;
+    } else {
+      if (defenderIdx >= defenderValues.length) break;
+      gain.push(pieceOnSquareValue);
+      pieceOnSquareValue = defenderValues[defenderIdx];
+      defenderIdx++;
+    }
+    isOpponentTurn = !isOpponentTurn;
+  }
+
+  // Backwards propagation: see = max(0, gain[i] - see)
+  let see = 0;
+  for (let i = gain.length - 1; i >= 0; i--) {
+    see = Math.max(0, gain[i] - see);
+  }
+
+  return see;
 }
 
 export function isProfitableCapture(state: GameState, action: { pieceId: string; target: PointId }, kingdom: Kingdom, profile: AiProfile): boolean {
+  const movingPiece = state.pieces.find((piece) => piece.id === action.pieceId);
   const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
 
-  if (!capturedPiece || isNeutralBlocker(capturedPiece)) {
+  if (!capturedPiece || isNeutralBlocker(capturedPiece) || !movingPiece) {
     return false;
   }
 
@@ -444,7 +474,13 @@ export function isProfitableCapture(state: GameState, action: { pieceId: string;
     return true;
   }
 
-  return staticExchangeScore(state, action, kingdom, profile) >= profitableCaptureMargin;
+  const see = staticExchangeScore(state, action, kingdom, profile);
+
+  if (movingPiece && pieceValue(movingPiece, profile) > pieceValue(capturedPiece, profile) * 2 && see < profitableCaptureMargin * 2) {
+    return false;
+  }
+
+  return see >= profitableCaptureMargin;
 }
 
 export function addressesHangingPiece(state: GameState, action: { pieceId: string; target: PointId }, kingdom: Kingdom, profile: AiProfile): boolean {

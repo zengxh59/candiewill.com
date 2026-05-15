@@ -696,8 +696,11 @@ function isAiTurn(): boolean {
 }
 
 function connectOnlineSocket(pathSuffix = ""): void {
-  if (onlineSocket && (onlineSocket.readyState === WebSocket.OPEN || onlineSocket.readyState === WebSocket.CONNECTING)) {
-    return;
+  // Close existing connection before creating a new one
+  if (onlineSocket && onlineSocket.readyState !== WebSocket.CLOSED) {
+    clearInterval(onlineHeartbeatTimer!);
+    onlineHeartbeatTimer = null;
+    onlineSocket.close();
   }
 
   onlineConnectionState = "connecting";

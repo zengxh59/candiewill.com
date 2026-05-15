@@ -33,15 +33,34 @@ export class RoomDO implements DurableObject {
 
   constructor(private ctx: DurableObjectState, private env: unknown) {}
 
+  private async ensureRoomLoaded(): Promise<void> {
+    if (this.room) return;
+    const stored = await this.ctx.storage.get<SerializedRoom>("room");
+    if (stored) {
+      this.room = deserializeRoom(stored);
+    }
+  }
+
+  private async persistRoom(): Promise<void> {
+    if (this.room) {
+      await this.ctx.storage.put("room", serializeRoom(this.room));
+    } else {
+      await this.ctx.storage.delete("room");
+    }
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.headers.get("Upgrade") !== "websocket") {
       if (url.pathname === "/check") {
+        await this.ensureRoomLoaded();
         return new Response(this.room ? "exists" : "available", { status: this.room ? 200 : 404 });
       }
       return new Response("WebSocket endpoint", { status: 426 });
     }
+
+    await this.ensureRoomLoaded();
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
@@ -58,7 +77,7 @@ export class RoomDO implements DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  async webSocketMessage(ws: WebSocket, data: string): void {
+  async webSocketMessage(ws: WebSocket, data: string): Promise<void> {
     let message: ClientOnlineMessage;
 
     try {
@@ -67,6 +86,8 @@ export class RoomDO implements DurableObject {
       this.send(ws, { type: "error", message: "消息格式无效。" });
       return;
     }
+
+    await this.ensureRoomLoaded();
 
     try {
       switch (message.type) {
@@ -108,6 +129,8 @@ export class RoomDO implements DurableObject {
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
+    await this.ensureRoomLoaded();
+
     const session = this.sockets.get(ws);
     this.sockets.delete(ws);
 
@@ -134,6 +157,7 @@ export class RoomDO implements DurableObject {
     };
 
     this.joinRoomInternal(ws, msg.playerId, msg.name);
+    void this.persistRoom();
   }
 
   private handleJoinRoom(ws: WebSocket, msg: Extract<ClientOnlineMessage, { type: "joinRoom" }>): void {
@@ -177,6 +201,7 @@ export class RoomDO implements DurableObject {
     this.syncPhase();
     this.send(ws, { type: "roomJoined", snapshot: this.snapshot(playerId) });
     this.broadcastRoom();
+    void this.persistRoom();
   }
 
   private handleSubmitMove(ws: WebSocket, msg: Extract<ClientOnlineMessage, { type: "submitMove" }>): void {
@@ -225,6 +250,7 @@ export class RoomDO implements DurableObject {
       this.syncPhase();
       this.send(ws, { type: "moveAccepted", clientMoveId: msg.clientMoveId, snapshot: this.snapshot(msg.playerId) });
       this.broadcastRoom(msg.playerId);
+      void this.persistRoom();
     } catch (error) {
       this.send(ws, { type: "moveRejected", clientMoveId: msg.clientMoveId, reason: error instanceof Error ? error.message : "走子无效。" });
     }
@@ -254,6 +280,7 @@ export class RoomDO implements DurableObject {
     this.disconnectPlayer(msg.playerId);
     this.send(ws, { type: "roomJoined", snapshot: this.snapshot(msg.playerId) });
     this.broadcastRoom();
+    void this.persistRoom();
   }
 
   private disconnectPlayer(playerId: string): void {
@@ -266,6 +293,7 @@ export class RoomDO implements DurableObject {
     participant.disconnectedAt = Date.now();
     this.syncPhase();
     this.broadcastRoom();
+    void this.persistRoom();
 
     this.scheduleCleanup();
   }
@@ -359,6 +387,7 @@ export class RoomDO implements DurableObject {
     if (allExpired) {
       this.room = null;
       this.sockets.clear();
+      await this.persistRoom();
     }
   }
 }
@@ -371,4 +400,35 @@ function cleanName(name: string | undefined): string | null {
 function defaultName(role: OnlineRole, seat: Kingdom | null): string {
   if (role === "spectator") return "观战者";
   return { wei: "魏国玩家", shu: "蜀国玩家", wu: "吴国玩家" }[seat!];
+}
+
+// === Persistence helpers ===
+
+type SerializedParticipant = [string, OnlineParticipant];
+interface SerializedRoom {
+  roomCode: string;
+  phase: OnlineRoomPhase;
+  state: GameState;
+  options: GameOptions;
+  participants: SerializedParticipant[];
+}
+
+function serializeRoom(room: RoomState): SerializedRoom {
+  return {
+    roomCode: room.roomCode,
+    phase: room.phase,
+    state: room.state,
+    options: room.options,
+    participants: [...room.participants.entries()],
+  };
+}
+
+function deserializeRoom(data: SerializedRoom): RoomState {
+  return {
+    roomCode: data.roomCode,
+    phase: data.phase,
+    state: data.state,
+    options: data.options,
+    participants: new Map(data.participants),
+  };
 }
