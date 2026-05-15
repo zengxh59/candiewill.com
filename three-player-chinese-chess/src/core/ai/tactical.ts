@@ -7,6 +7,7 @@ import type { AiProfile } from "../ai-profile";
 import { applyMove } from "../rules";
 
 import { pieceValue, isNeutralBlocker } from "./evaluate";
+import { type ZobristHash, xorHash, pieceHash, sideHash, defeatedHash } from "./zobrist";
 
 export const profitableCaptureMargin = 120;
 export const hangingPieceMargin = 220;
@@ -35,6 +36,7 @@ export interface UndoInfo {
   defeatedKingdoms: Kingdom[];
   winner: Kingdom | null;
   positionMapCleared: boolean;
+  zobrist: ZobristHash | undefined;
 }
 
 export function makeSearchMove(state: GameState, pieceId: string, target: PointId): UndoInfo {
@@ -65,7 +67,15 @@ export function makeSearchMove(state: GameState, pieceId: string, target: PointI
     defeatedKingdoms: state.defeatedKingdoms,
     winner: state.winner,
     positionMapCleared: state._positionMap !== undefined,
+    zobrist: (state as { _zobrist?: ZobristHash })._zobrist,
   };
+
+  // Incremental Zobrist update
+  let hash: ZobristHash = undo.zobrist ?? { hi: 0, lo: 0 };
+
+  // XOR out old piece position, XOR in new position
+  hash = xorHash(hash, pieceHash(movingPiece.type, movingPiece.kingdom, fromPosition));
+  hash = xorHash(hash, pieceHash(movingPiece.type, movingPiece.kingdom, target));
 
   // Clear position map cache
   if (state._positionMap) {
@@ -144,6 +154,23 @@ export function makeSearchMove(state: GameState, pieceId: string, target: PointI
     (state as { checkedKingdoms: Kingdom[] }).checkedKingdoms = checked;
   }
 
+  // Finalize Zobrist hash
+  if (capturedPiece) {
+    if (capturedPiece.type === "general") {
+      // General capture changes too many things for incremental update — invalidate
+      (state as { _zobrist?: ZobristHash })._zobrist = undefined;
+      return undo;
+    }
+    // XOR out captured piece
+    hash = xorHash(hash, pieceHash(capturedPiece.type, capturedPiece.kingdom, capturedPiece.position));
+  }
+
+  // Side change: XOR out old side, XOR in new side
+  hash = xorHash(hash, sideHash(undo.currentKingdom));
+  hash = xorHash(hash, sideHash(state.currentKingdom));
+
+  (state as { _zobrist?: ZobristHash })._zobrist = hash;
+
   return undo;
 }
 
@@ -167,9 +194,11 @@ export function unmakeSearchMove(state: GameState, undo: UndoInfo): void {
       // Re-insert the captured piece at its original index
       state.pieces.splice(undo.capturedPieceIndex, 0, { ...undo.capturedPiece });
     } else {
+      // Restore properties in-place to preserve shared references with parent states
       const pieceIndex = state.pieces.findIndex((piece) => piece.id === undo.capturedPiece!.id);
       if (pieceIndex >= 0) {
-        state.pieces[pieceIndex] = { ...undo.capturedPiece };
+        (state.pieces[pieceIndex] as { defeated: boolean }).defeated = undo.capturedPiece.defeated;
+        (state.pieces[pieceIndex] as { blocksMovement: boolean }).blocksMovement = undo.capturedPiece.blocksMovement;
       }
     }
   }
@@ -180,10 +209,11 @@ export function unmakeSearchMove(state: GameState, undo: UndoInfo): void {
     (state.pieces[movingPieceIndex] as { position: PointId }).position = undo.fromPosition;
   }
 
-  // Rebuild position map if it existed before
-  if (undo.positionMapCleared) {
-    (state as { _positionMap: Map<PointId, Piece> | undefined })._positionMap = undefined;
-  }
+  // Always clear position map — inner searches may have populated a stale cache
+  (state as { _positionMap: Map<PointId, Piece> | undefined })._positionMap = undefined;
+
+  // Restore Zobrist hash
+  (state as { _zobrist?: ZobristHash })._zobrist = undo.zobrist;
 }
 
 export function isPointControlledByOpponent(state: GameState, point: PointId, kingdom: Kingdom): boolean {
@@ -302,7 +332,7 @@ function linePieceAttacksSquare(state: GameState, piece: Piece, square: PointId)
 
 function generalAttacksSquare(state: GameState, piece: Piece, square: PointId): boolean {
   // Palace moves: check if adjacent in palace
-  const palaceRows = kingdomRows[piece.kingdom].slice(2);
+  const palaceRows = kingdomRows[piece.kingdom].slice(2) as readonly string[];
   const { row, col } = parsePointId(piece.position);
   const { row: targetRow, col: targetCol } = parsePointId(square);
   if (palaceRows.includes(targetRow) && targetCol >= 4 && targetCol <= 6) {

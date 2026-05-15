@@ -43,6 +43,8 @@ import {
   tacticalStabilityScore,
 } from "./evaluate";
 
+import { hashToKey, computeFullHash, type ZobristHash } from "./zobrist";
+
 export interface AiMove {
   pieceId: string;
   from: PointId;
@@ -249,10 +251,23 @@ export function chooseAiMove(
         break;
       }
 
-      const nextState = applySearchMove(state, action.pieceId, action.target);
-      const rawScore = depth > 0
-        ? evaluateAfterResponses(nextState, kingdom, depth, searchProfile, style, context)
-        : evaluateState(nextState, kingdom, searchProfile, style) + forcingOpportunityScore(nextState, kingdom, searchProfile, style);
+      const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+      const isGeneralCapture = capturedPiece?.type === "general";
+      let rawScore: number;
+
+      if (isGeneralCapture) {
+        const nextState = applySearchMove(state, action.pieceId, action.target);
+        rawScore = depth > 0
+          ? evaluateAfterResponses(nextState, kingdom, depth, searchProfile, style, context)
+          : evaluateState(nextState, kingdom, searchProfile, style) + forcingOpportunityScore(nextState, kingdom, searchProfile, style);
+      } else {
+        const undo = makeSearchMove(state, action.pieceId, action.target);
+        rawScore = depth > 0
+          ? evaluateAfterResponses(state, kingdom, depth, searchProfile, style, context)
+          : evaluateState(state, kingdom, searchProfile, style) + forcingOpportunityScore(state, kingdom, searchProfile, style);
+        unmakeSearchMove(state, undo);
+      }
+
       const score =
         rawScore +
         cheapActionScore(state, action, kingdom, profile, style) * profile.scoring.rootActionWeight +
@@ -287,11 +302,25 @@ export function chooseAiMove(
           break;
         }
 
-        const nextState = applySearchMove(state, action.pieceId, action.target);
-        const score =
-          (depth > 0
+        const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+        const isGeneralCapture = capturedPiece?.type === "general";
+        let rawScore: number;
+
+        if (isGeneralCapture) {
+          const nextState = applySearchMove(state, action.pieceId, action.target);
+          rawScore = depth > 0
             ? evaluateAfterResponses(nextState, kingdom, depth, searchProfile, style, context)
-            : evaluateState(nextState, kingdom, searchProfile, style) + forcingOpportunityScore(nextState, kingdom, searchProfile, style)) +
+            : evaluateState(nextState, kingdom, searchProfile, style) + forcingOpportunityScore(nextState, kingdom, searchProfile, style);
+        } else {
+          const undo = makeSearchMove(state, action.pieceId, action.target);
+          rawScore = depth > 0
+            ? evaluateAfterResponses(state, kingdom, depth, searchProfile, style, context)
+            : evaluateState(state, kingdom, searchProfile, style) + forcingOpportunityScore(state, kingdom, searchProfile, style);
+          unmakeSearchMove(state, undo);
+        }
+
+        const score =
+          rawScore +
           cheapActionScore(state, action, kingdom, profile, style) * profile.scoring.rootActionWeight +
           styleRootPolicyScore(state, action, kingdom, profile, style, moveOptions);
 
@@ -1802,16 +1831,14 @@ function actionKey(action: AiMove): string {
 }
 
 function searchStateKey(state: GameState): string {
-  // Use a simpler key format that avoids sorting overhead
-  // Only include pieces that affect the game (block movement)
-  const parts: string[] = [state.currentKingdom, state.winner ?? "-", state.defeatedKingdoms.join("")];
-
-  for (const piece of state.pieces) {
-    if (!piece.blocksMovement) continue;
-    parts.push(piece.id, piece.position, piece.controller[0], piece.defeated ? "1" : "0");
+  // Use Zobrist hash when available for O(1) key computation
+  let zobrist = (state as { _zobrist?: ZobristHash })._zobrist;
+  if (!zobrist) {
+    // Lazy initialization: compute full hash and cache it on the state
+    zobrist = computeFullHash(state.pieces, state.currentKingdom, state.defeatedKingdoms);
+    (state as { _zobrist?: ZobristHash })._zobrist = zobrist;
   }
-
-  return parts.join("|");
+  return hashToKey(zobrist);
 }
 
 function compareAction(left: AiMove, right: AiMove): number {
@@ -1853,6 +1880,7 @@ function skipTurn(state: GameState): GameState | null {
     ...state,
     currentKingdom: nextNextKingdom,
     _positionMap: undefined,
+    ...({ _zobrist: undefined } as Record<string, unknown>),
   };
 }
 

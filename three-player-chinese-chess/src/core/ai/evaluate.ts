@@ -298,6 +298,26 @@ export function kingSafetyScore(state: GameState, kingdom: Kingdom, profile: AiP
     score -= profile.scoring.generalAwayPenalty;
   }
 
+  // Open file threat: opponent chariot/cannon with clear line to general's column
+  const { col: generalCol } = parsePointId(general.position);
+  const dangerousLinePieces = directAttackers.filter((piece) => piece.type === "chariot" || piece.type === "cannon");
+  if (dangerousLinePieces.length > 0 && defenders.filter((d) => d.type === "advisor").length === 0) {
+    // No advisors blocking — line attack is more dangerous
+    score -= dangerousLinePieces.length * 800;
+  }
+
+  // Escape square evaluation: fewer legal moves for general = more dangerous
+  const generalMoves = getPseudoLegalMoves(state, general);
+  const safeEscapeSquares = generalMoves.filter((target) => {
+    return !opponentPieces.some((opp) => pieceAttacksSquare(state, opp, target));
+  });
+  if (safeEscapeSquares.length === 0 && !state.checkedKingdoms.includes(kingdom)) {
+    // General is not in check but has no safe escape — pre-checkmate danger
+    score -= 1200;
+  } else if (safeEscapeSquares.length <= 1) {
+    score -= 400;
+  }
+
   return score;
 }
 
@@ -444,6 +464,42 @@ function endgameGoalScore(
     .filter((piece) => piece.controller === aiKingdom && piece.type === "soldier" && piece.blocksMovement && !isNeutralBlocker(piece))
     .reduce((total, piece) => total + soldierAdvance(piece), 0);
   score += ownSoldierPush * 95;
+
+  // Passed soldier bonus: soldiers with no opponent pieces blocking their advance path
+  const passedSoldierBonus = state.pieces
+    .filter((piece) => piece.controller === aiKingdom && piece.type === "soldier" && piece.blocksMovement && !isNeutralBlocker(piece))
+    .reduce((total, piece) => {
+      const advance = soldierAdvance(piece);
+      if (advance <= 1) return total; // Already at max advance
+      const { row, col } = parsePointId(piece.position);
+      const pieceRows = kingdomRows[piece.kingdom] as readonly string[];
+      const currentIdx = pieceRows.indexOf(row as never);
+      // Check if any opponent piece blocks the next 2 rows in the same column
+      const blocked = state.pieces.some((opp) => {
+        if (!opp.blocksMovement || opp.controller === aiKingdom) return false;
+        const oppPos = parsePointId(opp.position);
+        if (oppPos.col !== col) return false;
+        const oppIdx = pieceRows.indexOf(oppPos.row as never);
+        return oppIdx > currentIdx && oppIdx <= currentIdx + 2;
+      });
+      return blocked ? total : total + advance * 60;
+    }, 0);
+  score += passedSoldierBonus;
+
+  // "Eliminate weak first": in 3-player endgame, reward pressure on the weaker opponent
+  if (opponents.length >= 2) {
+    const sorted = [...opponents].sort((left, right) => material[left] - material[right]);
+    const weakest = sorted[0];
+    const weakGeneral = generalFor(state, weakest);
+    if (weakGeneral) {
+      const attackersOnWeak = state.pieces.filter((piece) => {
+        return piece.controller === aiKingdom && piece.blocksMovement && !isNeutralBlocker(piece) && pieceAttacksSquare(state, piece, weakGeneral.position);
+      });
+      // Extra bonus for attacking the weaker opponent — eliminating them first gives 1v1 advantage
+      const materialDiff = material[sorted[1]] - material[weakest];
+      score += attackersOnWeak.length * Math.min(materialDiff * 0.5, 3000) * style.attackMultiplier;
+    }
+  }
 
   if (materialLead > 900) {
     score += simplifiedEndgameBonus(state, aiKingdom, profile) * 0.18;
@@ -731,6 +787,53 @@ function allianceAwareScore(
     if (piecesAttacking.length >= 2) {
       // Opponents are fighting each other — "坐山观虎斗" bonus
       score += piecesAttacking.length * 280 * style.balanceMultiplier;
+    }
+  }
+
+  // === Cooperative Pressure: AI + weak opponent both attacking strongest ===
+  const strongestOpponent = sorted[0];
+  const weakOpponent = sorted[1];
+  const strongestGeneral = generalFor(state, strongestOpponent);
+  if (strongestGeneral && strongestOpponent !== aiKingdom) {
+    const ourAttackersOnStrong = state.pieces.filter(
+      (piece) =>
+        piece.controller === aiKingdom &&
+        piece.blocksMovement &&
+        !isNeutralBlocker(piece) &&
+        pieceAttacksSquare(state, piece, strongestGeneral.position),
+    );
+    const weakAttackersOnStrong = state.pieces.filter(
+      (piece) =>
+        piece.controller === weakOpponent &&
+        piece.blocksMovement &&
+        !isNeutralBlocker(piece) &&
+        pieceAttacksSquare(state, piece, strongestGeneral.position),
+    );
+
+    if (ourAttackersOnStrong.length >= 1 && weakAttackersOnStrong.length >= 1) {
+      // Cooperative attack on the strongest — reward coordinated pressure
+      score += (ourAttackersOnStrong.length + weakAttackersOnStrong.length) * 320 * style.attackMultiplier;
+    }
+  }
+
+  // === Betrayal Risk: AI is weakest and opponents aren't fighting each other ===
+  if (aiMaterial <= weakestMaterial * 0.9) {
+    const opponentsFighting = opponentGenerals.some(({ kingdom: targetKingdom, general: targetGeneral }) => {
+      if (!targetGeneral) return false;
+      const attacker = activeOpponents.find((k) => k !== targetKingdom);
+      if (!attacker) return false;
+      return state.pieces.some(
+        (piece) =>
+          piece.controller === attacker &&
+          piece.blocksMovement &&
+          !isNeutralBlocker(piece) &&
+          pieceAttacksSquare(state, piece, targetGeneral.position),
+      );
+    });
+
+    if (!opponentsFighting) {
+      // AI is weakest and opponents aren't fighting — they may target AI next
+      score -= 1200 * style.safetyMultiplier;
     }
   }
 
