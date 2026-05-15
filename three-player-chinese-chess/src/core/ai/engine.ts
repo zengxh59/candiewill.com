@@ -1105,8 +1105,9 @@ function evaluateAfterResponses(
 
   let bestActorScore = Number.NEGATIVE_INFINITY;
   let selectedAiScore = Number.POSITIVE_INFINITY;
-  const actorStyle = aiStyleForKingdom(state.currentKingdom);
-  const responseActions = getCandidateActions(state, state.currentKingdom, profile, actorStyle).slice(0, profile.responseBeam);
+  const actorKingdom = state.currentKingdom;
+  const actorStyle = aiStyleForKingdom(actorKingdom);
+  const responseActions = getCandidateActions(state, actorKingdom, profile, actorStyle).slice(0, profile.responseBeam);
 
   if (!responseActions.length) {
     return evaluateState(state, aiKingdom, profile, aiStyle);
@@ -1117,16 +1118,34 @@ function evaluateAfterResponses(
       break;
     }
 
-    const responseState = applySearchMove(state, response.pieceId, response.target);
+    const capturedPiece = capturedPieceAt(state, response.pieceId, response.target);
+    const isGeneralCapture = capturedPiece?.type === "general";
+    let aiScore: number;
+    let actorScore: number;
 
-    const aiScore =
-      responseState.currentKingdom !== aiKingdom && !responseState.winner
-        ? evaluateThirdPlayerResponse(responseState, aiKingdom, depth - 1, profile, aiStyle, context)
-        : search(responseState, aiKingdom, depth - 1, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, profile, aiStyle, context);
-    const actorScore =
-      evaluateState(responseState, state.currentKingdom, profile, actorStyle) +
-      tacticalStabilityScore(responseState, state.currentKingdom, profile, actorStyle) +
-      coalitionPressureScore(responseState, state.currentKingdom, aiKingdom, profile, actorStyle);
+    if (isGeneralCapture) {
+      const responseState = applySearchMove(state, response.pieceId, response.target);
+      aiScore =
+        responseState.currentKingdom !== aiKingdom && !responseState.winner
+          ? evaluateThirdPlayerResponse(responseState, aiKingdom, depth - 1, profile, aiStyle, context)
+          : search(responseState, aiKingdom, depth - 1, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, profile, aiStyle, context);
+      actorScore =
+        evaluateState(responseState, actorKingdom, profile, actorStyle) +
+        tacticalStabilityScore(responseState, actorKingdom, profile, actorStyle) +
+        coalitionPressureScore(responseState, actorKingdom, aiKingdom, profile, actorStyle);
+    } else {
+      const undo = makeSearchMove(state, response.pieceId, response.target);
+      const nextKingdom = state.currentKingdom;
+      aiScore =
+        nextKingdom !== aiKingdom && !state.winner
+          ? evaluateThirdPlayerResponse(state, aiKingdom, depth - 1, profile, aiStyle, context)
+          : search(state, aiKingdom, depth - 1, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, profile, aiStyle, context);
+      actorScore =
+        evaluateState(state, actorKingdom, profile, actorStyle) +
+        tacticalStabilityScore(state, actorKingdom, profile, actorStyle) +
+        coalitionPressureScore(state, actorKingdom, aiKingdom, profile, actorStyle);
+      unmakeSearchMove(state, undo);
+    }
 
     if (actorScore > bestActorScore || (actorScore === bestActorScore && aiScore < selectedAiScore)) {
       bestActorScore = actorScore;
@@ -1145,8 +1164,9 @@ function evaluateThirdPlayerResponse(
   aiStyle: AiStyleProfile,
   context: SearchContext,
 ): number {
-  const actorStyle = aiStyleForKingdom(state.currentKingdom);
-  const actions = getCandidateActions(state, state.currentKingdom, profile, actorStyle).slice(0, profile.thirdPlayerBeam);
+  const actorKingdom = state.currentKingdom;
+  const actorStyle = aiStyleForKingdom(actorKingdom);
+  const actions = getCandidateActions(state, actorKingdom, profile, actorStyle).slice(0, profile.thirdPlayerBeam);
 
   if (!actions.length) {
     return evaluateState(state, aiKingdom, profile, aiStyle);
@@ -1160,22 +1180,45 @@ function evaluateThirdPlayerResponse(
       break;
     }
 
-    const nextState = applySearchMove(state, action.pieceId, action.target);
+    const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+    const isGeneralCapture = capturedPiece?.type === "general";
+    let actorScore: number;
+    let aiScore: number;
 
-    const actorScore =
-      evaluateState(nextState, state.currentKingdom, profile, actorStyle) +
-      tacticalStabilityScore(nextState, state.currentKingdom, profile, actorStyle) +
-      coalitionPressureScore(nextState, state.currentKingdom, aiKingdom, profile, actorStyle);
-    const aiScore = search(
-      nextState,
-      aiKingdom,
-      Math.max(0, depth - 1),
-      Number.NEGATIVE_INFINITY,
-      Number.POSITIVE_INFINITY,
-      profile,
-      aiStyle,
-      context,
-    );
+    if (isGeneralCapture) {
+      const nextState = applySearchMove(state, action.pieceId, action.target);
+      actorScore =
+        evaluateState(nextState, actorKingdom, profile, actorStyle) +
+        tacticalStabilityScore(nextState, actorKingdom, profile, actorStyle) +
+        coalitionPressureScore(nextState, actorKingdom, aiKingdom, profile, actorStyle);
+      aiScore = search(
+        nextState,
+        aiKingdom,
+        Math.max(0, depth - 1),
+        Number.NEGATIVE_INFINITY,
+        Number.POSITIVE_INFINITY,
+        profile,
+        aiStyle,
+        context,
+      );
+    } else {
+      const undo = makeSearchMove(state, action.pieceId, action.target);
+      actorScore =
+        evaluateState(state, actorKingdom, profile, actorStyle) +
+        tacticalStabilityScore(state, actorKingdom, profile, actorStyle) +
+        coalitionPressureScore(state, actorKingdom, aiKingdom, profile, actorStyle);
+      aiScore = search(
+        state,
+        aiKingdom,
+        Math.max(0, depth - 1),
+        Number.NEGATIVE_INFINITY,
+        Number.POSITIVE_INFINITY,
+        profile,
+        aiStyle,
+        context,
+      );
+      unmakeSearchMove(state, undo);
+    }
 
     if (actorScore > bestActorScore || (actorScore === bestActorScore && aiScore < selectedAiScore)) {
       bestActorScore = actorScore;
@@ -1240,9 +1283,18 @@ function quiescenceSearch(
     let best = standPat;
 
     for (const action of tacticalActions) {
-      const searchState = applySearchMove(state, action.pieceId, action.target);
+      const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+      const isGeneralCapture = capturedPiece?.type === "general";
+      let score: number;
 
-      const score = quiescenceSearch(searchState, aiKingdom, profile, aiStyle, context, qDepth + 1);
+      if (isGeneralCapture) {
+        const searchState = applySearchMove(state, action.pieceId, action.target);
+        score = quiescenceSearch(searchState, aiKingdom, profile, aiStyle, context, qDepth + 1);
+      } else {
+        const undo = makeSearchMove(state, action.pieceId, action.target);
+        score = quiescenceSearch(state, aiKingdom, profile, aiStyle, context, qDepth + 1);
+        unmakeSearchMove(state, undo);
+      }
 
       best = Math.max(best, score);
 
@@ -1259,13 +1311,27 @@ function quiescenceSearch(
   let selectedAiScore = standPat;
 
   for (const action of tacticalActions) {
-    const nextState = applySearchMove(state, action.pieceId, action.target);
+    const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
+    const isGeneralCapture = capturedPiece?.type === "general";
+    let actorScore: number;
+    let aiScore: number;
 
-    const actorScore =
-      evaluateState(nextState, currentKingdom, profile, currentStyle) +
-      tacticalStabilityScore(nextState, currentKingdom, profile, currentStyle) +
-      coalitionPressureScore(nextState, currentKingdom, aiKingdom, profile, currentStyle);
-    const aiScore = quiescenceSearch(nextState, aiKingdom, profile, aiStyle, context, qDepth + 1);
+    if (isGeneralCapture) {
+      const nextState = applySearchMove(state, action.pieceId, action.target);
+      actorScore =
+        evaluateState(nextState, currentKingdom, profile, currentStyle) +
+        tacticalStabilityScore(nextState, currentKingdom, profile, currentStyle) +
+        coalitionPressureScore(nextState, currentKingdom, aiKingdom, profile, currentStyle);
+      aiScore = quiescenceSearch(nextState, aiKingdom, profile, aiStyle, context, qDepth + 1);
+    } else {
+      const undo = makeSearchMove(state, action.pieceId, action.target);
+      actorScore =
+        evaluateState(state, currentKingdom, profile, currentStyle) +
+        tacticalStabilityScore(state, currentKingdom, profile, currentStyle) +
+        coalitionPressureScore(state, currentKingdom, aiKingdom, profile, currentStyle);
+      aiScore = quiescenceSearch(state, aiKingdom, profile, aiStyle, context, qDepth + 1);
+      unmakeSearchMove(state, undo);
+    }
 
     if (actorScore > bestActorScore || (actorScore === bestActorScore && aiScore < selectedAiScore)) {
       bestActorScore = actorScore;
