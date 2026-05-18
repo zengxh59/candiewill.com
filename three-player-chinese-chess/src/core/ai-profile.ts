@@ -18,8 +18,15 @@ export interface AiStyleProfile {
 
 export type GamePhase = "opening" | "middlegame" | "endgame";
 
+/** 对手建模：用于估算「他方」走子倾向，不改变合法走法生成 */
+export type OpponentModel = "maxn" | "paranoid" | "leader_targeting" | "opportunistic" | "adaptive";
+
 export interface AiProfile {
   searchDepth: number;
+  /** 静态搜索节点上限（防止战术分支爆炸） */
+  maxQuiescenceNodes: number;
+  /** 对手决策模型，默认 paranoid 与历史行为一致 */
+  opponentModel: OpponentModel;
   rootBeam: number;
   responseBeam: number;
   thirdPlayerBeam: number;
@@ -68,7 +75,22 @@ export interface AiProfile {
     coordinationBonus: number;
     centerControlBonus: number;
     crossedSoldierMultiplier: number;
+    /** 两方棋子同时能打到我方要子时，按子力比例加罚（三人棋暴露） */
+    thirdPartyExposurePenaltyScale: number;
+    /** 将帅被两个不同敌方势力直接攻击时的额外罚分 */
+    multiSideKingAttackPenalty: number;
+    leaderPressureScale: number;
+    pincerAttackPenaltyScale: number;
+    chariotCannonMobilityEval: number;
+    centralChannelEval: number;
+    riverCrossingThreatEval: number;
+    opportunisticStrikeEval: number;
+    balanceManipulationEval: number;
   };
+}
+
+export function cloneAiProfile(profile: AiProfile): AiProfile {
+  return JSON.parse(JSON.stringify(profile)) as AiProfile;
 }
 
 export const kingdomAiStyles: Record<Kingdom, AiStyleProfile> = {
@@ -128,6 +150,9 @@ export function aiStyleForKingdom(kingdom: Kingdom): AiStyleProfile {
 
 export const defaultAiProfile: AiProfile = {
   "searchDepth": 5,
+  "maxQuiescenceNodes": 120_000,
+  /** 默认 paranoid；若 opponent-matrix 报告 adaptive 稳定 ≥52% 可再考虑切换 */
+  "opponentModel": "paranoid",
   "rootBeam": 30,
   "responseBeam": 15,
   "thirdPlayerBeam": 9,
@@ -199,6 +224,15 @@ export const defaultAiProfile: AiProfile = {
     "tacticalOpponentRiskReward": 0.35,
     "coordinationBonus": 168.88,
     "centerControlBonus": 60,
-    "crossedSoldierMultiplier": 2.0
+    "crossedSoldierMultiplier": 2.0,
+    "thirdPartyExposurePenaltyScale": 0.22,
+    "multiSideKingAttackPenalty": 3200,
+    "leaderPressureScale": 0.35,
+    "pincerAttackPenaltyScale": 0.18,
+    "chariotCannonMobilityEval": 12,
+    "centralChannelEval": 8,
+    "riverCrossingThreatEval": 14,
+    "opportunisticStrikeEval": 0.4,
+    "balanceManipulationEval": 1
   }
 };

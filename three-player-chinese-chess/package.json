@@ -13,6 +13,13 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "ai:benchmark": "AI_BENCHMARK_ENTRY=1 vite-node scripts/ai-benchmark.ts",
+    "ai:match": "vite-node scripts/ai-match-eval.ts",
+    "ai:match:baseline": "vite-node scripts/ai-match-batch.ts --preset=profile-100-chunked",
+    "ai:match:baseline:20": "vite-node scripts/ai-match-batch.ts --preset=profile-20",
+    "ai:match:opponents": "vite-node scripts/ai-match-batch.ts --preset=opponent-matrix",
+    "ai:ordering:bench": "vite-node scripts/ai-ordering-benchmark.ts",
+    "ai:bad-moves:export": "vite-node scripts/export-bad-move-samples.ts",
+    "ai:acceptance": "vite-node scripts/acceptance-summary.ts",
     "ai:tune": "vite-node scripts/ai-tune.ts",
     "ai:improve": "npm run ai:tune -- --iterations 24 --apply && npm test && npm run ai:benchmark",
     "ai:learn:loop": "vite-node scripts/ai-learn-loop.ts"

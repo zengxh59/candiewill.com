@@ -16,6 +16,7 @@ type HashPair = [number, number];
 const pieceTable: HashPair[][][] = [];
 const sideTable: HashPair[] = []; // sideTable[kindomIdx] = [hi, lo]
 const defeatedTable: HashPair[] = []; // defeatedTable[kingdomIdx] = [hi, lo]
+const checkedTable: HashPair[] = []; // checkedTable[kingdomIdx] = [hi, lo]
 
 function mulberry32(seed: number): () => number {
   return () => {
@@ -49,6 +50,7 @@ function initTables(): void {
   for (let k = 0; k < KINGDOM_COUNT; k++) {
     sideTable[k] = [rand32(), rand32()];
     defeatedTable[k] = [rand32(), rand32()];
+    checkedTable[k] = [rand32(), rand32()];
   }
 }
 
@@ -96,10 +98,15 @@ export function defeatedHash(kingdom: Kingdom): HashPair {
   return defeatedTable[kingdomIndex[kingdom]];
 }
 
+export function checkedKingdomHash(kingdom: Kingdom): HashPair {
+  return checkedTable[kingdomIndex[kingdom]];
+}
+
 export function computeFullHash(
   pieces: Array<{ type: PieceType; kingdom: Kingdom; position: PointId; blocksMovement: boolean; controller: Kingdom }>,
   currentKingdom: Kingdom,
   defeatedKingdoms: readonly Kingdom[],
+  checkedKingdoms: readonly Kingdom[] = [],
 ): ZobristHash {
   let hash: ZobristHash = { hi: 0, lo: 0 };
 
@@ -113,6 +120,10 @@ export function computeFullHash(
 
   for (const kingdom of defeatedKingdoms) {
     hash = xorHash(hash, defeatedHash(kingdom));
+  }
+
+  for (const kingdom of checkedKingdoms) {
+    hash = xorHash(hash, checkedKingdomHash(kingdom));
   }
 
   return hash;

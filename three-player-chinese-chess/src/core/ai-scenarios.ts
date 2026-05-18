@@ -446,6 +446,57 @@ export const aiScenarios: AiScenario[] = [
       "wei",
     ),
   },
+  {
+    id: "quiescence-greedy-recapture",
+    title: "静态搜索：避免贪吃后立即被反吃",
+    kingdom: "wei",
+    avoid: { pieceId: "wei-cannon", target: "F3" },
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-cannon", "cannon", "炮", "E3", "wei"),
+        piece("wei-horse", "horse", "马", "C1", "wei"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wu-horse", "horse", "马", "F3", "wu"),
+        piece("wu-chariot", "chariot", "车", "F9", "wu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+      "wei",
+    ),
+  },
+  {
+    id: "miss-urgent-defense-chariot",
+    title: "紧急防守：车威胁己方马时应救子",
+    kingdom: "wei",
+    mustAddressThreatenedPiece: true,
+    state: stateWith(
+      [
+        piece("wei-general", "general", "魏", "E5", "wei"),
+        piece("wei-horse", "horse", "马", "C4", "wei"),
+        piece("wu-general", "general", "吴", "J5", "wu"),
+        piece("wu-chariot", "chariot", "车", "F4", "wu"),
+        piece("shu-general", "general", "蜀", "O5", "shu"),
+      ],
+      "wei",
+    ),
+  },
+  {
+    id: "third-party-exposure-risk",
+    title: "避免大子落在两家可同时打击的格点",
+    kingdom: "wu",
+    avoid: { pieceId: "wu-chariot", target: "F5" },
+    state: stateWith(
+      [
+        piece("wu-general", "general", "吴", "J4", "wu"),
+        piece("wu-chariot", "chariot", "车", "F9", "wu"),
+        piece("wei-chariot", "chariot", "车", "C9", "wei"),
+        piece("shu-chariot", "chariot", "车", "H5", "shu"),
+        piece("wei-general", "general", "魏", "E1", "wei"),
+        piece("shu-general", "general", "蜀", "O1", "shu"),
+      ],
+      "wu",
+    ),
+  },
 ];
 
 function stateWith(pieces: Piece[], currentKingdom: GameState["currentKingdom"], checkedKingdoms: GameState["checkedKingdoms"] = []): GameState {

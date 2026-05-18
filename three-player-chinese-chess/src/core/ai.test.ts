@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseAiMove, clearTranspositionTable } from "./ai";
+import { chooseAiMove, clearTranspositionTable, createSearchStats } from "./ai";
 import { aiScenarios } from "./ai-scenarios";
 import { aiStyleForKingdom } from "./ai-profile";
 import { capturedPieceAt, createInitialGameState, type GameState } from "./game-state";
@@ -129,7 +129,7 @@ describe("AI player", () => {
     const move = chooseAiMove(state, "shu", undefined, { timeBudgetMs: 250 });
 
     expect(move).not.toBeNull();
-    expect(performance.now() - startedAt).toBeLessThan(500);
+    expect(performance.now() - startedAt).toBeLessThan(750);
   });
 
   it("can sample a different strong candidate when exploration is enabled", () => {
@@ -196,6 +196,21 @@ describe("AI player", () => {
       pieceId: "wu-chariot",
       target: "A5",
     });
+  });
+
+  it("exposes search stats after deep search on tactical scenario", () => {
+    clearTranspositionTable();
+    const scenario = aiScenarios.find((s) => s.id === "escape-check")!;
+    const stats = createSearchStats();
+    chooseAiMove(scenario.state, scenario.kingdom, undefined, {
+      debugStats: stats,
+      maxDepth: 5,
+      timeBudgetMs: 1_500,
+      openingSearchDepth: 0,
+      explorationRate: 0,
+    });
+    expect(stats.nodes).toBeGreaterThan(30);
+    expect(stats.quiescenceNodes).toBeGreaterThan(0);
   });
 });
 

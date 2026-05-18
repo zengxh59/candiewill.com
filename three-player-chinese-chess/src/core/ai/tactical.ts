@@ -7,7 +7,7 @@ import type { AiProfile } from "../ai-profile";
 import { applyMove } from "../rules";
 
 import { pieceValue, isNeutralBlocker } from "./evaluate";
-import { type ZobristHash, xorHash, pieceHash, sideHash, defeatedHash } from "./zobrist";
+import { type ZobristHash, xorHash, pieceHash, sideHash, defeatedHash, checkedKingdomHash } from "./zobrist";
 
 export const profitableCaptureMargin = 200;
 export const hangingPieceMargin = 220;
@@ -168,6 +168,18 @@ export function makeSearchMove(state: GameState, pieceId: string, target: PointI
   // Side change: XOR out old side, XOR in new side
   hash = xorHash(hash, sideHash(undo.currentKingdom));
   hash = xorHash(hash, sideHash(state.currentKingdom));
+
+  for (const kingdom of undo.checkedKingdoms) {
+    if (!state.checkedKingdoms.includes(kingdom)) {
+      hash = xorHash(hash, checkedKingdomHash(kingdom));
+    }
+  }
+
+  for (const kingdom of state.checkedKingdoms) {
+    if (!undo.checkedKingdoms.includes(kingdom)) {
+      hash = xorHash(hash, checkedKingdomHash(kingdom));
+    }
+  }
 
   (state as { _zobrist?: ZobristHash })._zobrist = hash;
 

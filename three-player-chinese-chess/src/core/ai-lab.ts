@@ -1,5 +1,5 @@
 import { chooseAiMove, evaluateAiState, type AiMove } from "./ai";
-import { aiStyleForKingdom, defaultAiProfile, type AiProfile } from "./ai-profile";
+import { aiStyleForKingdom, cloneAiProfile, defaultAiProfile, type AiProfile } from "./ai-profile";
 import { aiScenarios } from "./ai-scenarios";
 import type { Kingdom } from "./board";
 import { capturedPieceAt, createInitialGameState, type GameState } from "./game-state";
@@ -110,7 +110,7 @@ export function tuneAiProfile(
   const iterations = options.iterations ?? 8;
   const random = seededRandom(options.seed ?? 20260506);
   const populationSize = options.populationSize ?? 3;
-  let bestProfile = cloneProfile(profile);
+  let bestProfile = cloneAiProfile(profile);
   let bestReport = runAiBenchmark(bestProfile, options.benchmark);
   const rejected: AiTuneResult["rejected"] = [];
 
@@ -142,10 +142,6 @@ export function tuneAiProfile(
     profile: bestProfile,
     rejected: rejected.slice(-24),
   };
-}
-
-export function cloneAiProfile(profile: AiProfile): AiProfile {
-  return cloneProfile(profile);
 }
 
 function runScenarioBenchmark(profile: AiProfile): AiBenchmarkReport["scenario"] {
@@ -581,7 +577,7 @@ function openingSeeds(): Array<Array<{ pieceId: string; target: string }>> {
 }
 
 function mutateProfile(profile: AiProfile, random: () => number): AiProfile {
-  const next = cloneProfile(profile);
+  const next = cloneAiProfile(profile);
   const group = mutationGroups[Math.floor(random() * mutationGroups.length)];
   const fieldCount = 2 + Math.floor(random() * Math.min(3, group.length));
   const fields = shuffle([...group], random).slice(0, fieldCount);
@@ -605,7 +601,7 @@ const mutationGroups: Array<Array<keyof AiProfile["scoring"]>> = [
 ];
 
 function blendProfiles(best: AiProfile, original: AiProfile, random: () => number): AiProfile {
-  const next = cloneProfile(best);
+  const next = cloneAiProfile(best);
 
   for (const field of tunableScalars) {
     if (random() < 0.18) {
@@ -638,10 +634,6 @@ function selfPlayStateKey(state: GameState): string {
   return `${state.currentKingdom}|${pieces}`;
 }
 
-function cloneProfile(profile: AiProfile): AiProfile {
-  return JSON.parse(JSON.stringify(profile)) as AiProfile;
-}
-
 function seededRandom(initialSeed: number): () => number {
   let seed = initialSeed;
 
@@ -650,3 +642,5 @@ function seededRandom(initialSeed: number): () => number {
     return seed / 4294967296;
   };
 }
+
+export { cloneAiProfile } from "./ai-profile";

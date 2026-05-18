@@ -41,6 +41,7 @@ import {
   kingSafetyScore,
   strongestOpponent,
   tacticalStabilityScore,
+  opponentControllersAttackingSquare,
 } from "./evaluate";
 
 import { hashToKey, computeFullHash, type ZobristHash } from "./zobrist";
@@ -69,12 +70,18 @@ export interface AiMoveOptions {
   styleDiversitySeed?: number;
   debugStats?: SearchStats;
   maxQuiescenceDepth?: number;
+  /** 测试/基准：跳过 actionOrderingScore 中的增强启发项（保留 TT/killer/history） */
+  disableEnhancedOrdering?: boolean;
 }
 
 export interface SearchStats {
   completedDepth: number;
   nodes: number;
   ttHits: number;
+  /** 写入置换表次数（不含覆盖） */
+  ttStores: number;
+  /** 静态搜索展开的节点计数（用于限幅与报告） */
+  quiescenceNodes: number;
   cutoffs: number;
   timedOut: boolean;
   principalVariation: AiMove[];
@@ -93,11 +100,24 @@ const defaultSearchBudgetMs = 1000;
 const TT_MAX_SIZE = 500_000;
 const persistentTT = new Map<string, TranspositionEntry>();
 
+/** 每次根搜索递增，写入 TT 条目用于代际替换策略 */
+let ttRootSearchGeneration = 0;
+
+function nextRootSearchGeneration(): number {
+  ttRootSearchGeneration += 1;
+  return ttRootSearchGeneration;
+}
+
 const EVAL_CACHE_MAX_SIZE = 100_000;
 const evalCache = new Map<string, number>();
 
 export function clearTranspositionTable(): void {
   persistentTT.clear();
+  evalCache.clear();
+  ttRootSearchGeneration = 0;
+}
+
+export function clearEvalCache(): void {
   evalCache.clear();
 }
 
@@ -109,7 +129,10 @@ interface SearchContext {
   killerMoves: Map<number, AiMove[]>;
   history: Map<string, number>;
   maxQuiescenceDepth: number;
+  maxQuiescenceNodes: number;
+  searchGeneration: number;
   principalVariation: AiMove[];
+  disableEnhancedOrdering: boolean;
 }
 
 interface TranspositionEntry {
@@ -117,6 +140,7 @@ interface TranspositionEntry {
   score: number;
   flag: "exact" | "lower" | "upper";
   bestMove: AiMove | null;
+  generation: number;
 }
 
 export function createSearchStats(): SearchStats {
@@ -124,6 +148,8 @@ export function createSearchStats(): SearchStats {
     completedDepth: 0,
     nodes: 0,
     ttHits: 0,
+    ttStores: 0,
+    quiescenceNodes: 0,
     cutoffs: 0,
     timedOut: false,
     principalVariation: [],
@@ -142,7 +168,7 @@ export function chooseAiMove(
 ): AiMove | null {
   const moveOptions = options.random || options.seed === undefined ? options : { ...options, random: seededRandom(options.seed) };
   const style = options.style ?? aiStyleForKingdom(kingdom);
-  const context = createSearchContext(moveOptions, state, kingdom, profile);
+  const context = createSearchContext(moveOptions, state, kingdom, profile, nextRootSearchGeneration());
   context.stats.startTimeMs = performance.now();
   const phase = gamePhaseFor(state);
   // Compute effective search depth first so fastOpening can check whether real search is happening.
@@ -495,6 +521,58 @@ export function getAiActions(state: GameState, kingdom: Kingdom, profile: AiProf
   return getCandidateActions(state, kingdom, profile, aiStyleForKingdom(kingdom));
 }
 
+function opponentBiasAgainstAi(state: GameState, profile: AiProfile, aiKingdom: Kingdom, actorKingdom: Kingdom): number {
+  if (state.winner || state.defeatedKingdoms.includes(actorKingdom)) {
+    return 0;
+  }
+
+  const mat = materialByController(state, profile);
+  const aiLeadVsActor = mat[aiKingdom] - mat[actorKingdom];
+  const active = turnOrder.filter((kingdom) => !state.defeatedKingdoms.includes(kingdom));
+
+  if (active.length < 2) {
+    return 0;
+  }
+
+  const sorted = [...active].sort((left, right) => mat[right] - mat[left]);
+  const leader = sorted[0];
+  const paranoidBase = Math.min(0.12, Math.max(0, (aiLeadVsActor - 300) / 1200) * 0.12);
+
+  switch (profile.opponentModel) {
+    case "maxn":
+      return 0;
+    case "paranoid":
+      return paranoidBase;
+    case "leader_targeting": {
+      let bias = Math.max(paranoidBase * 0.9, Math.min(0.13, Math.max(0, mat[leader] - mat[actorKingdom]) / 1100) * 0.1);
+
+      if (leader === aiKingdom) {
+        bias = Math.max(bias, Math.min(0.15, Math.max(0, aiLeadVsActor - 220) / 1000 * 0.13));
+      }
+
+      return Math.min(0.18, bias);
+    }
+    case "opportunistic": {
+      const behind = mat[actorKingdom] <= mat[leader] - 350;
+
+      return behind ? Math.min(0.1, Math.max(0, mat[leader] - mat[actorKingdom]) / 1500 * 0.1) : paranoidBase * 0.4;
+    }
+    case "adaptive": {
+      if (aiLeadVsActor > 450) {
+        return paranoidBase;
+      }
+
+      if (aiLeadVsActor < -400) {
+        return Math.min(0.09, (Math.max(0, mat[leader] - mat[actorKingdom]) / 1600) * 0.09);
+      }
+
+      return Math.min(0.05, paranoidBase * 0.4);
+    }
+    default:
+      return paranoidBase;
+  }
+}
+
 function search(
   state: GameState,
   aiKingdom: Kingdom,
@@ -705,16 +783,7 @@ function search(
   let selectedAiScore = Number.POSITIVE_INFINITY;
   let bestMove: AiMove | null = null;
 
-  // Paranoid bias: when the AI is materially ahead, opponents are incentivised to
-  // coordinate against the leader. We model this by blending a small fraction of the
-  // negative AI score into each opponent's decision score, nudging them toward
-  // moves that also hurt the AI when actor scores are otherwise similar.
-  // Kept intentionally small (max 0.12) so the AI still values material captures
-  // even when leading — we don't want it to avoid free material out of paranoia.
-  const opponentMaterial = materialByController(state, profile);
-  const aiMaterialLead = opponentMaterial[aiKingdom] - opponentMaterial[currentKingdom];
-  // Bias ramps from 0 at equal material to 0.12 when AI leads by ≥1200 centipawns.
-  const paranoidBias = Math.min(0.12, Math.max(0, (aiMaterialLead - 300) / 1200) * 0.12);
+  const opponentCoordinationBias = opponentBiasAgainstAi(state, profile, aiKingdom, currentKingdom);
 
   // Threat Space Search: when opponent has threatening moves against AI,
   // ensure they are searched first (even if not in the beam)
@@ -761,7 +830,7 @@ function search(
     // actorDecisionScore: the score the opponent uses to rank this move.
     // When the AI is leading, inject a Paranoid bias so the opponent slightly
     // prefers moves that hurt the AI (模拟"联手克强"的博弈倾向).
-    const actorDecisionScore = actorScore + pressureBonus - aiScore * paranoidBias;
+    const actorDecisionScore = actorScore + pressureBonus - aiScore * opponentCoordinationBias;
 
     if (
       actorDecisionScore > bestActorScore ||
@@ -974,6 +1043,10 @@ function actionOrderingScore(
     return score;
   }
 
+  if (isKingDefenseCapture(state, action, kingdom)) {
+    score += 320_000;
+  }
+
   if (preferredMove && sameMove(action, preferredMove)) {
     score += 1_000_000;
   }
@@ -983,6 +1056,10 @@ function actionOrderingScore(
   }
 
   score += context?.history.get(actionKey(action)) ?? 0;
+
+  if (context?.disableEnhancedOrdering) {
+    return score;
+  }
 
   if (capturedPiece && !isNeutralBlocker(capturedPiece)) {
     // MVV-LVA: prioritize capturing high-value pieces with low-value attackers
@@ -999,8 +1076,35 @@ function actionOrderingScore(
     score += 18_000;
   }
 
+  // 双重威胁：吃子同时将军，利于战术延伸（走法排序，非局面硬编码）
+  if (capturedPiece && !isNeutralBlocker(capturedPiece) && givesDirectCheck(state, action, kingdom)) {
+    score += 14_000;
+  }
+
+  // 中枢纵线（第 5 列）：三人棋盘公共要道，略抬高占领/过线着法排序
+  if (movingPiece) {
+    const col = parsePointId(action.target).col;
+    if (col === 5) {
+      score += (movingPiece.type === "soldier" ? 900 : 1_400) * (gamePhaseFor(state) === "opening" ? 1 : 0.75);
+    }
+  }
+
   if (addressesHangingPiece(state, action, kingdom, profile)) {
     score += 14_000 + Math.max(0, threatenedPieceReliefScore(state, action, movingPiece, capturedPiece, kingdom, profile, style));
+  }
+
+  if (
+    movingPiece &&
+    (movingPiece.type === "chariot" || movingPiece.type === "cannon" || movingPiece.type === "horse")
+  ) {
+    try {
+      const preview = applySearchMove(state, action.pieceId, action.target);
+      if (opponentControllersAttackingSquare(preview, action.target, kingdom) >= 2) {
+        score -= 120_000 + pieceValue(movingPiece, profile) * profile.scoring.thirdPartyExposurePenaltyScale;
+      }
+    } catch {
+      score -= 80_000;
+    }
   }
 
   if (gamePhaseFor(state) === "endgame") {
@@ -1107,8 +1211,6 @@ function evaluateAfterResponses(
     return evaluateState(state, aiKingdom, profile, aiStyle);
   }
 
-  let bestActorScore = Number.NEGATIVE_INFINITY;
-  let selectedAiScore = Number.POSITIVE_INFINITY;
   const actorKingdom = state.currentKingdom;
   const actorStyle = aiStyleForKingdom(actorKingdom);
   const responseActions = getCandidateActions(state, actorKingdom, profile, actorStyle).slice(0, profile.responseBeam);
@@ -1116,6 +1218,10 @@ function evaluateAfterResponses(
   if (!responseActions.length) {
     return evaluateState(state, aiKingdom, profile, aiStyle);
   }
+
+  const bias = opponentBiasAgainstAi(state, profile, aiKingdom, actorKingdom);
+  let bestDecision = Number.NEGATIVE_INFINITY;
+  let selectedAiScore = Number.POSITIVE_INFINITY;
 
   for (const response of responseActions) {
     if (!hasSearchTime(context)) {
@@ -1151,8 +1257,10 @@ function evaluateAfterResponses(
       unmakeSearchMove(state, undo);
     }
 
-    if (actorScore > bestActorScore || (actorScore === bestActorScore && aiScore < selectedAiScore)) {
-      bestActorScore = actorScore;
+    const decision = actorScore - aiScore * bias;
+
+    if (decision > bestDecision || (decision === bestDecision && aiScore < selectedAiScore)) {
+      bestDecision = decision;
       selectedAiScore = aiScore;
     }
   }
@@ -1176,7 +1284,8 @@ function evaluateThirdPlayerResponse(
     return evaluateState(state, aiKingdom, profile, aiStyle);
   }
 
-  let bestActorScore = Number.NEGATIVE_INFINITY;
+  const bias = opponentBiasAgainstAi(state, profile, aiKingdom, actorKingdom);
+  let bestDecision = Number.NEGATIVE_INFINITY;
   let selectedAiScore = Number.POSITIVE_INFINITY;
 
   for (const action of actions) {
@@ -1224,8 +1333,10 @@ function evaluateThirdPlayerResponse(
       unmakeSearchMove(state, undo);
     }
 
-    if (actorScore > bestActorScore || (actorScore === bestActorScore && aiScore < selectedAiScore)) {
-      bestActorScore = actorScore;
+    const decision = actorScore - aiScore * bias;
+
+    if (decision > bestDecision || (decision === bestDecision && aiScore < selectedAiScore)) {
+      bestDecision = decision;
       selectedAiScore = aiScore;
     }
   }
@@ -1241,6 +1352,15 @@ function quiescenceSearch(
   context: SearchContext,
   qDepth: number,
 ): number {
+  if (context.stats.quiescenceNodes >= context.maxQuiescenceNodes) {
+    return (
+      evaluateState(state, aiKingdom, profile, aiStyle) +
+      tacticalStabilityScore(state, aiKingdom, profile, aiStyle) +
+      forcingOpportunityScore(state, aiKingdom, profile, aiStyle)
+    );
+  }
+
+  context.stats.quiescenceNodes += 1;
   context.stats.nodes += 1;
 
   const standPat =
@@ -1311,8 +1431,9 @@ function quiescenceSearch(
     return best;
   }
 
-  let bestActorScore = Number.NEGATIVE_INFINITY;
+  let bestDecision = Number.NEGATIVE_INFINITY;
   let selectedAiScore = standPat;
+  const bias = opponentBiasAgainstAi(state, profile, aiKingdom, currentKingdom);
 
   for (const action of tacticalActions) {
     const capturedPiece = capturedPieceAt(state, action.pieceId, action.target);
@@ -1337,8 +1458,10 @@ function quiescenceSearch(
       unmakeSearchMove(state, undo);
     }
 
-    if (actorScore > bestActorScore || (actorScore === bestActorScore && aiScore < selectedAiScore)) {
-      bestActorScore = actorScore;
+    const decision = actorScore - aiScore * bias;
+
+    if (decision > bestDecision || (decision === bestDecision && aiScore < selectedAiScore)) {
+      bestDecision = decision;
       selectedAiScore = aiScore;
     }
   }
@@ -1470,7 +1593,13 @@ function computeAdaptiveBudget(baseBudget: number, state: GameState, kingdom: Ki
   return Math.round(baseBudget * multiplier);
 }
 
-function createSearchContext(options: AiMoveOptions, state?: GameState, kingdom?: Kingdom, profile?: AiProfile): SearchContext {
+function createSearchContext(
+  options: AiMoveOptions,
+  state?: GameState,
+  kingdom?: Kingdom,
+  profile?: AiProfile,
+  searchGeneration?: number,
+): SearchContext {
   const rawBudget = options.timeBudgetMs ?? ((options.explorationRate ?? 0) > 0 ? 1_000 : defaultSearchBudgetMs);
   const budget = state && kingdom && profile ? computeAdaptiveBudget(rawBudget, state, kingdom, profile) : rawBudget;
   const stats = options.debugStats ?? createSearchStats();
@@ -1478,6 +1607,8 @@ function createSearchContext(options: AiMoveOptions, state?: GameState, kingdom?
   stats.completedDepth = 0;
   stats.nodes = 0;
   stats.ttHits = 0;
+  stats.ttStores = 0;
+  stats.quiescenceNodes = 0;
   stats.cutoffs = 0;
   stats.timedOut = false;
   stats.principalVariation = [];
@@ -1489,7 +1620,7 @@ function createSearchContext(options: AiMoveOptions, state?: GameState, kingdom?
   // Age out shallow entries and cap TT size before starting a new search
   if (persistentTT.size > TT_MAX_SIZE * 0.8) {
     for (const [key, entry] of persistentTT) {
-      if (entry.depth <= 1) {
+      if (entry.depth <= 1 || entry.generation < ttRootSearchGeneration - 2) {
         persistentTT.delete(key);
       }
 
@@ -1507,7 +1638,10 @@ function createSearchContext(options: AiMoveOptions, state?: GameState, kingdom?
     killerMoves: new Map(),
     history: new Map(),
     maxQuiescenceDepth: options.maxQuiescenceDepth ?? (options.skillProfile === "fast" ? 2 : options.skillProfile === "tactical" ? 5 : 4),
+    maxQuiescenceNodes: profile?.maxQuiescenceNodes ?? defaultAiProfile.maxQuiescenceNodes,
+    searchGeneration: searchGeneration ?? ttRootSearchGeneration,
     principalVariation: [],
+    disableEnhancedOrdering: options.disableEnhancedOrdering ?? false,
   };
 }
 
@@ -1549,7 +1683,8 @@ function storeTransposition(
     return;
   }
 
-  context.tt.set(key, { depth, score, flag, bestMove });
+  context.stats.ttStores += 1;
+  context.tt.set(key, { depth, score, flag, bestMove, generation: context.searchGeneration });
 
   // Evict oldest shallow entries if over capacity
   if (context.tt.size > TT_MAX_SIZE) {
@@ -1660,7 +1795,12 @@ function tacticalActionScore(
   profile: AiProfile,
   style: AiStyleProfile,
 ): number {
-  const nextState = applySearchMove(state, action.pieceId, action.target);
+  let nextState: GameState;
+  try {
+    nextState = applySearchMove(state, action.pieceId, action.target);
+  } catch {
+    return -1_000_000;
+  }
   let score = 0;
 
   if (state.checkedKingdoms.includes(kingdom) && !nextState.checkedKingdoms.includes(kingdom)) {
@@ -1696,7 +1836,22 @@ function quietExposurePenalty(
     return 0;
   }
 
-  const nextState = applySearchMove(state, action.pieceId, action.target);
+  let nextState: GameState;
+  try {
+    nextState = applySearchMove(state, action.pieceId, action.target);
+  } catch {
+    return pieceValue(movingPiece, profile) * 2 / style.riskTolerance;
+  }
+
+  const dualAttackers = opponentControllersAttackingSquare(nextState, action.target, kingdom);
+
+  if (dualAttackers >= 2) {
+    return (
+      pieceValue(movingPiece, profile) *
+      Math.max(1.2, profile.scoring.thirdPartyExposurePenaltyScale * 12) /
+      style.riskTolerance
+    );
+  }
 
   if (!isPointControlledByOpponent(nextState, action.target, kingdom)) {
     return 0;
@@ -1905,7 +2060,7 @@ function searchStateKey(state: GameState): string {
   let zobrist = (state as { _zobrist?: ZobristHash })._zobrist;
   if (!zobrist) {
     // Lazy initialization: compute full hash and cache it on the state
-    zobrist = computeFullHash(state.pieces, state.currentKingdom, state.defeatedKingdoms);
+    zobrist = computeFullHash(state.pieces, state.currentKingdom, state.defeatedKingdoms, state.checkedKingdoms);
     (state as { _zobrist?: ZobristHash })._zobrist = zobrist;
   }
   return hashToKey(zobrist);

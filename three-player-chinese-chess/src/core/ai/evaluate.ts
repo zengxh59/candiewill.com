@@ -59,6 +59,15 @@ export function evaluateState(state: GameState, aiKingdom: Kingdom, profile: AiP
   score += allianceAwareScore(state, aiKingdom, material, profile, style);
   score += endgameGoalScore(state, aiKingdom, material, profile, style);
   score -= positionRepetitionScore(state, aiKingdom);
+  score -= multiSideKingAttackPenalty(state, aiKingdom, profile) * style.safetyMultiplier;
+  score -= thirdPartyMajorExposurePenalty(state, aiKingdom, profile, phase) * style.safetyMultiplier;
+  score -= leaderPressureScore(material, aiKingdom, profile) * style.balanceMultiplier;
+  score -= pincerAttackPenalty(state, aiKingdom, profile, phase) * style.safetyMultiplier;
+  score += chariotCannonMobilityScore(state, aiKingdom, profile) * style.mobilityMultiplier;
+  score += centralChannelControlScore(state, aiKingdom, profile) * style.mobilityMultiplier;
+  score += riverCrossingThreatScore(state, aiKingdom, profile) * style.attackMultiplier;
+  score += opportunisticStrikeBonus(state, aiKingdom, material, profile) * style.attackMultiplier;
+  score += balanceManipulationScore(material, aiKingdom, profile) * style.balanceMultiplier;
 
   return score;
 }
@@ -321,6 +330,79 @@ export function kingSafetyScore(state: GameState, kingdom: Kingdom, profile: AiP
   return score;
 }
 
+/** 两个及以上敌方势力能直接打到将帅时额外罚分（多人围攻将面） */
+export function multiSideKingAttackPenalty(state: GameState, aiKingdom: Kingdom, profile: AiProfile): number {
+  const general = state.pieces.find((piece) => piece.kingdom === aiKingdom && piece.type === "general" && piece.blocksMovement);
+
+  if (!general) {
+    return 0;
+  }
+
+  const attackerKingdoms = new Set<Kingdom>();
+
+  for (const piece of state.pieces) {
+    if (piece.controller === aiKingdom || !piece.blocksMovement || isNeutralBlocker(piece)) {
+      continue;
+    }
+
+    if (pieceAttacksSquare(state, piece, general.position)) {
+      attackerKingdoms.add(piece.controller);
+    }
+  }
+
+  return attackerKingdoms.size >= 2 ? profile.scoring.multiSideKingAttackPenalty : 0;
+}
+
+/** 统计有多少个敌方势力可攻击某格（用于走法排序/静态惩罚） */
+export function opponentControllersAttackingSquare(state: GameState, square: PointId, kingdom: Kingdom): number {
+  const attackerKingdoms = new Set<Kingdom>();
+
+  for (const opp of state.pieces) {
+    if (opp.controller === kingdom || !opp.blocksMovement || isNeutralBlocker(opp)) {
+      continue;
+    }
+
+    if (getPseudoLegalMoves(state, opp).includes(square)) {
+      attackerKingdoms.add(opp.controller);
+    }
+  }
+
+  return attackerKingdoms.size;
+}
+
+/** 大车大炮马处于两家可同时打击的格子上时的暴露罚分 */
+export function thirdPartyMajorExposurePenalty(state: GameState, aiKingdom: Kingdom, profile: AiProfile, phase?: GamePhase): number {
+  let penalty = 0;
+
+  for (const piece of state.pieces) {
+    if (piece.controller !== aiKingdom || !piece.blocksMovement || isNeutralBlocker(piece)) {
+      continue;
+    }
+
+    if (piece.type !== "chariot" && piece.type !== "cannon" && piece.type !== "horse") {
+      continue;
+    }
+
+    const attackerKingdoms = new Set<Kingdom>();
+
+    for (const opp of state.pieces) {
+      if (opp.controller === aiKingdom || !opp.blocksMovement || isNeutralBlocker(opp)) {
+        continue;
+      }
+
+      if (getPseudoLegalMoves(state, opp).includes(piece.position)) {
+        attackerKingdoms.add(opp.controller);
+      }
+    }
+
+    if (attackerKingdoms.size >= 2) {
+      penalty += pieceValue(piece, profile, phase) * profile.scoring.thirdPartyExposurePenaltyScale;
+    }
+  }
+
+  return penalty;
+}
+
 function pieceSafetyScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile, style: AiStyleProfile): number {
   let score = 0;
   const phase = gamePhaseFor(state);
@@ -349,6 +431,142 @@ function pieceSafetyScore(state: GameState, aiKingdom: Kingdom, profile: AiProfi
   }
 
   return score;
+}
+
+/** 领先时成为众矢之的的压力（子力领先越大，略增风险感知） */
+export function leaderPressureScore(
+  material: Record<Kingdom, number>,
+  aiKingdom: Kingdom,
+  profile: AiProfile,
+): number {
+  const opponents = (Object.keys(material) as Kingdom[]).filter((k) => k !== aiKingdom);
+  const maxOpp = Math.max(...opponents.map((k) => material[k]));
+  const lead = material[aiKingdom] - maxOpp;
+
+  if (lead <= 400) {
+    return 0;
+  }
+
+  return Math.min(lead * profile.scoring.leaderPressureScale, 2800);
+}
+
+/** 重要子被两家不同势力同时攻击时的夹击罚分 */
+export function pincerAttackPenalty(state: GameState, aiKingdom: Kingdom, profile: AiProfile, phase?: GamePhase): number {
+  let penalty = 0;
+
+  for (const piece of state.pieces) {
+    if (piece.controller !== aiKingdom || !piece.blocksMovement || isNeutralBlocker(piece)) {
+      continue;
+    }
+
+    if (piece.type !== "chariot" && piece.type !== "cannon" && piece.type !== "horse") {
+      continue;
+    }
+
+    const attackerKingdoms = new Set<Kingdom>();
+    for (const opp of state.pieces) {
+      if (opp.controller === aiKingdom || !opp.blocksMovement || isNeutralBlocker(opp)) {
+        continue;
+      }
+
+      if (getPseudoLegalMoves(state, opp).includes(piece.position)) {
+        attackerKingdoms.add(opp.controller);
+      }
+    }
+
+    if (attackerKingdoms.size >= 2) {
+      penalty += pieceValue(piece, profile, phase) * profile.scoring.pincerAttackPenaltyScale;
+    }
+  }
+
+  return penalty;
+}
+
+export function chariotCannonMobilityScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile): number {
+  let score = 0;
+
+  for (const piece of state.pieces) {
+    if (piece.controller !== aiKingdom || !piece.blocksMovement || isNeutralBlocker(piece)) {
+      continue;
+    }
+
+    if (piece.type !== "chariot" && piece.type !== "cannon") {
+      continue;
+    }
+
+    const mobility = getPseudoLegalMoves(state, piece).length;
+    score += mobility * profile.scoring.chariotCannonMobilityEval;
+  }
+
+  return score;
+}
+
+export function centralChannelControlScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile): number {
+  let score = 0;
+
+  for (const piece of state.pieces) {
+    if (piece.controller !== aiKingdom || !piece.blocksMovement || isNeutralBlocker(piece)) {
+      continue;
+    }
+
+    if (parsePointId(piece.position).col === 5) {
+      score += profile.scoring.centralChannelEval * (piece.type === "soldier" ? 0.6 : 1);
+    }
+  }
+
+  return score;
+}
+
+export function riverCrossingThreatScore(state: GameState, aiKingdom: Kingdom, profile: AiProfile): number {
+  let score = 0;
+
+  for (const piece of state.pieces) {
+    if (piece.controller !== aiKingdom || !piece.blocksMovement || isNeutralBlocker(piece)) {
+      continue;
+    }
+
+    if (piece.type === "soldier" && hasCrossedBorder(piece)) {
+      score += soldierAdvance(piece) * profile.scoring.riverCrossingThreatEval;
+    }
+  }
+
+  return score;
+}
+
+export function opportunisticStrikeBonus(
+  state: GameState,
+  aiKingdom: Kingdom,
+  material: Record<Kingdom, number>,
+  profile: AiProfile,
+): number {
+  const opponents = (Object.keys(material) as Kingdom[]).filter((k) => k !== aiKingdom && !state.defeatedKingdoms.includes(k));
+  const maxOpp = opponents.length ? Math.max(...opponents.map((k) => material[k])) : 0;
+  const behind = material[aiKingdom] < maxOpp - 350;
+
+  if (!behind) {
+    return 0;
+  }
+
+  let bonus = 0;
+  for (const piece of state.pieces) {
+    if (piece.controller !== aiKingdom || !piece.blocksMovement) {
+      continue;
+    }
+
+    if (piece.type === "chariot" || piece.type === "cannon" || piece.type === "horse") {
+      bonus += getPseudoLegalMoves(state, piece).length * profile.scoring.opportunisticStrikeEval;
+    }
+  }
+
+  return bonus;
+}
+
+export function balanceManipulationScore(
+  material: Record<Kingdom, number>,
+  aiKingdom: Kingdom,
+  profile: AiProfile,
+): number {
+  return threePlayerBalanceScore(material, aiKingdom, profile) * profile.scoring.balanceManipulationEval;
 }
 
 function threePlayerBalanceScore(material: Record<Kingdom, number>, aiKingdom: Kingdom, profile: AiProfile): number {
